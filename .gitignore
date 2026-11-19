@@ -32,3 +32,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local development tools and build output
+.tool/
+dist/
+.DS_Store
+.idea/
+
+# Generated protobuf code is supplied by Buf Schema Registry
+gen/
+*.pb.go
