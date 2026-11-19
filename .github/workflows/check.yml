@@ -52,5 +52,5 @@ jobs:
         uses: otpki/.github/.github/actions/setup-ci@v1
       - name: Test with PostgreSQL
         env:
-          PGPROTOPAGINATE_TEST_DSN: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}/pgprotopaginate?sslmode=disable
+          PGPROTOPAGINATE_TEST_DSN: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/pgprotopaginate?sslmode=disable
         run: just test

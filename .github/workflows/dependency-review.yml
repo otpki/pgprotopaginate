@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   dependency-review:
+    if: ${{ github.event.repository.private == false }}
     permissions:
       contents: read
     uses: otpki/.github/.github/workflows/reusable-dependency-review.yml@v1
