@@ -1,0 +1,56 @@
+name: Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    uses: otpki/.github/.github/workflows/reusable-go-check.yml@v1
+    with:
+      commands: |
+        just proto-check
+        just format-check
+        just lint
+        just test-ci
+        just tidy
+      vulncheck-command: just vulncheck
+
+  postgres:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pgprotopaginate
+        ports:
+          - 5432/tcp
+        options: >-
+          --tmpfs /var/lib/postgresql
+          --health-cmd "pg_isready -U postgres -d pgprotopaginate"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup CI
+        uses: otpki/.github/.github/actions/setup-ci@v1
+      - name: Test with PostgreSQL
+        env:
+          PGPROTOPAGINATE_TEST_DSN: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/pgprotopaginate?sslmode=disable
+        run: just test

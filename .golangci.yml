@@ -1,0 +1,69 @@
+version: "2"
+
+linters:
+  default: standard
+
+  enable:
+    # Modern Go / simplification.
+    - modernize
+    - copyloopvar
+    - unconvert
+    - unparam
+    - usestdlibvars
+
+    # Correctness.
+    - contextcheck
+    - durationcheck
+    - errorlint
+    - errname
+    - nilerr
+    - nilnesserr
+    - wastedassign
+    - makezero
+    - gocritic
+    - recvcheck
+    - forcetypeassert
+
+    # Context / lifecycle.
+    - containedctx
+    - fatcontext
+
+    # Observability.
+    - spancheck
+    - sloglint
+
+    # Security.
+    - gosec
+    - bidichk
+    - asciicheck
+
+    # Test correctness.
+    - usetesting
+    - thelper
+    - reassign
+
+    # Repository hygiene.
+    - nolintlint
+    - misspell
+    - dupword
+    - whitespace
+    - revive
+
+  exclusions:
+    generated: lax
+    warn-unused: true
+
+    presets:
+      - comments
+
+    rules:
+      # Test fixtures and assertions are not production security boundaries.
+      # Keep the same test-code exception as otpki and pkcs11.
+      - path: '(_test\.go|^test/)'
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
