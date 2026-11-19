@@ -155,7 +155,10 @@ func (qb *QueryBuilder) buildTokenPaginationCTE() (string, error) {
 	}
 
 	// build FROM, JOIN, and WHERE
-	hasWhere := qb.buildQueryCommon(&queryBuilder, true)
+	hasWhere, err := qb.buildQueryCommon(&queryBuilder, true)
+	if err != nil {
+		return "", err
+	}
 
 	// add cursor condition
 	if hasWhere {

@@ -77,7 +77,9 @@ func (qb *QueryBuilder) BuildSQL() (string, []any, error) {
 	}
 
 	// handle FROM, JOIN, WHERE
-	qb.buildQueryCommon(&queryBuilder, false)
+	if _, err := qb.buildQueryCommon(&queryBuilder, false); err != nil {
+		return "", nil, err
+	}
 
 	// handle ORDER BY clause
 	orderBy, err := qb.buildOrderByClause()
@@ -173,7 +175,9 @@ func (qb *QueryBuilder) BuildCountSQL() (string, []any, error) {
 	}
 
 	// build common query parts, no need for ORDER BY, LIMIT, OFFSET
-	qb.buildQueryCommon(&queryBuilder, true)
+	if _, err := qb.buildQueryCommon(&queryBuilder, true); err != nil {
+		return "", nil, err
+	}
 
 	if grouped {
 		queryBuilder.WriteString(" ")
@@ -217,7 +221,7 @@ func (qb *QueryBuilder) buildSelectClause(queryBuilder *strings.Builder, additio
 	return nil
 }
 
-func (qb *QueryBuilder) buildQueryCommon(queryBuilder *strings.Builder, skipGroupBy bool) bool {
+func (qb *QueryBuilder) buildQueryCommon(queryBuilder *strings.Builder, skipGroupBy bool) (bool, error) {
 	// FROM
 	queryBuilder.WriteString(" FROM ")
 	if qb.params.schema != "" {
@@ -235,7 +239,9 @@ func (qb *QueryBuilder) buildQueryCommon(queryBuilder *strings.Builder, skipGrou
 	// WHERE clauses, only add WHERE if we have filters or where clauses
 	var whereBuilder strings.Builder
 	andWriter := newAndWriter(&whereBuilder)
-	qb.buildFilterClauses(andWriter)
+	if err := qb.buildFilterClauses(andWriter); err != nil {
+		return false, err
+	}
 
 	// Use same writer for later where-tally
 	for _, clause := range qb.params.whereClauses {
@@ -253,19 +259,19 @@ func (qb *QueryBuilder) buildQueryCommon(queryBuilder *strings.Builder, skipGrou
 		queryBuilder.WriteString(qb.params.groupBy)
 	}
 
-	return hasWhere
+	return hasWhere, nil
 }
 
-func (qb *QueryBuilder) buildFilterClauses(andWriter *andWriter) {
+func (qb *QueryBuilder) buildFilterClauses(andWriter *andWriter) error {
 	// Build all standard filters (reused by filter groups)
 	qb.buildAllFilters(andWriter, qb.params)
 
 	// JSON and array filters
-	qb.buildJSONFilters(andWriter)
-	qb.buildArrayFilters(andWriter)
+	qb.buildJSONFilters(andWriter, qb.params)
+	qb.buildArrayFilters(andWriter, qb.params)
 
 	// Filter groups (for OR logic)
-	qb.buildFilterGroups(andWriter)
+	return qb.buildFilterGroups(andWriter)
 }
 
 func (qb *QueryBuilder) buildEqualityFilters(andWriter *andWriter, filters map[string][]any, operator string) {
@@ -297,61 +303,61 @@ func (qb *QueryBuilder) buildEqualityFilters(andWriter *andWriter, filters map[s
 	}
 }
 
-func (qb *QueryBuilder) buildJSONFilters(andWriter *andWriter) {
+func (qb *QueryBuilder) buildJSONFilters(andWriter *andWriter, params *PaginationParams) {
 	// check if json object contains a value
-	for column, jsonValues := range qb.params.JSONContains {
+	for column, jsonValues := range params.JSONContains {
 		for _, jsonValue := range jsonValues {
 			andWriter.Write(fmt.Sprintf("%s @> $%d::jsonb", qb.quoteColumn(column), qb.addArg(jsonValue)))
 		}
 	}
 
 	// check if json object contains a key
-	for column, keys := range qb.params.JSONExists {
+	for column, keys := range params.JSONExists {
 		for _, key := range keys {
 			andWriter.Write(fmt.Sprintf("%s ? $%d", qb.quoteColumn(column), qb.addArg(key)))
 		}
 	}
 
 	// check if json object contains any of the keys
-	for column, keys := range qb.params.JSONAnyExists {
+	for column, keys := range params.JSONAnyExists {
 		if len(keys) > 0 {
 			andWriter.Write(fmt.Sprintf("%s ?| $%d", qb.quoteColumn(column), qb.addArg(keys)))
 		}
 	}
 
 	// check if json object contains all of the keys
-	for column, keys := range qb.params.JSONAllExists {
+	for column, keys := range params.JSONAllExists {
 		if len(keys) > 0 {
 			andWriter.Write(fmt.Sprintf("%s ?& $%d", qb.quoteColumn(column), qb.addArg(keys)))
 		}
 	}
 
 	// check if json object matches a path query
-	for column, pathQueries := range qb.params.JSONPathQuery {
+	for column, pathQueries := range params.JSONPathQuery {
 		for _, pathQuery := range pathQueries {
 			andWriter.Write(fmt.Sprintf("%s @? $%d", qb.quoteColumn(column), qb.addArg(pathQuery)))
 		}
 	}
 }
 
-func (qb *QueryBuilder) buildArrayFilters(andWriter *andWriter) {
+func (qb *QueryBuilder) buildArrayFilters(andWriter *andWriter, params *PaginationParams) {
 	// check if left array contains right array
-	for column, values := range qb.params.ArrayContains {
+	for column, values := range params.ArrayContains {
 		andWriter.Write(fmt.Sprintf("%s @> $%d", qb.quoteColumn(column), qb.addArg(values)))
 	}
 
 	// check if left array is contained by right array
-	for column, values := range qb.params.ArrayContainedBy {
+	for column, values := range params.ArrayContainedBy {
 		andWriter.Write(fmt.Sprintf("%s <@ $%d", qb.quoteColumn(column), qb.addArg(values)))
 	}
 
 	// check if arrays have any elements in common
-	for column, values := range qb.params.ArrayOverlap {
+	for column, values := range params.ArrayOverlap {
 		andWriter.Write(fmt.Sprintf("%s && $%d", qb.quoteColumn(column), qb.addArg(values)))
 	}
 }
 
-func (qb *QueryBuilder) buildFilterGroups(andWriter *andWriter) {
+func (qb *QueryBuilder) buildFilterGroups(andWriter *andWriter) error {
 	for _, group := range qb.params.FilterGroups {
 		if group == nil || len(group.Filters) == 0 {
 			continue
@@ -360,7 +366,10 @@ func (qb *QueryBuilder) buildFilterGroups(andWriter *andWriter) {
 		// Build clauses directly from protobuf filters
 		var groupClauses []string
 		for _, filter := range group.Filters {
-			clause := qb.buildSingleFilter(filter)
+			clause, err := qb.buildSingleFilter(filter)
+			if err != nil {
+				return err
+			}
 			if clause != "" {
 				groupClauses = append(groupClauses, clause)
 			}
@@ -378,119 +387,30 @@ func (qb *QueryBuilder) buildFilterGroups(andWriter *andWriter) {
 		case queryPB.LogicalOperator_LOGICAL_OPERATOR_AND, queryPB.LogicalOperator_LOGICAL_OPERATOR_UNSPECIFIED:
 			operator = " AND "
 		default:
-			operator = " AND "
+			return oops.In(ServiceName).Errorf("unsupported logical operator: %v", group.Operator)
 		}
 
 		groupClause := "(" + strings.Join(groupClauses, operator) + ")"
 		andWriter.Write(groupClause)
 	}
+	return nil
 }
 
-func (qb *QueryBuilder) buildSingleFilter(filter *queryPB.Filter) string {
-	if filter == nil || filter.Column == "" {
-		return ""
+// buildSingleFilter shares value conversion and SQL semantics with ordinary filters.
+func (qb *QueryBuilder) buildSingleFilter(filter *queryPB.Filter) (string, error) {
+	if filter == nil {
+		return "", nil
 	}
-
-	column := filter.Column
-	operator := filter.Operator
-	values := filter.Values
-
-	// Convert protobuf FilterValue to any
-	vals := make([]any, len(values))
-	for i, v := range values {
-		switch {
-		case v.StringValue != "":
-			vals[i] = v.StringValue
-		case v.IntValue != 0:
-			vals[i] = v.IntValue
-		case v.DoubleValue != 0:
-			vals[i] = v.DoubleValue
-		case v.BoolValue:
-			vals[i] = v.BoolValue
-		}
+	params := NewPaginationParams()
+	if err := convertFilters([]*queryPB.Filter{filter}, params, nil); err != nil {
+		return "", err
 	}
-
-	quotedCol := qb.compareColumn(column, vals...)
-
-	switch operator {
-	case queryPB.FilterOperator_FILTER_OPERATOR_EQUALS:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s = $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_NOT_EQUALS:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s != $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s > $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN_OR_EQUAL:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s >= $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s < $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN_OR_EQUAL:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s <= $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_LIKE:
-		if len(values) == 0 {
-			return ""
-		}
-		if qb.isUUIDColumn(column) {
-			return fmt.Sprintf("%s::text LIKE $%d", qb.quoteColumn(column), qb.addArg(vals[0]))
-		}
-		return fmt.Sprintf("%s LIKE $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_ILIKE:
-		if len(values) == 0 {
-			return ""
-		}
-		if qb.isUUIDColumn(column) {
-			return fmt.Sprintf("%s::text ILIKE $%d", qb.quoteColumn(column), qb.addArg(vals[0]))
-		}
-		return fmt.Sprintf("%s ILIKE $%d", quotedCol, qb.addArg(vals[0]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_IN:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s = ANY($%d)", quotedCol, qb.addArg(vals))
-	case queryPB.FilterOperator_FILTER_OPERATOR_NOT_IN:
-		if len(values) == 0 {
-			return ""
-		}
-		return fmt.Sprintf("%s != ALL($%d)", quotedCol, qb.addArg(vals))
-	case queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN:
-		if len(values) < 2 {
-			return ""
-		}
-		return fmt.Sprintf("%s BETWEEN $%d AND $%d", quotedCol, qb.addArg(vals[0]), qb.addArg(vals[1]))
-	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL:
-		return fmt.Sprintf("%s IS NULL", quotedCol)
-	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_NULL:
-		return fmt.Sprintf("%s IS NOT NULL", quotedCol)
-	case queryPB.FilterOperator_FILTER_OPERATOR_IS_EMPTY:
-		if qb.isUUIDColumn(column) {
-			return fmt.Sprintf("%s IS NULL", quotedCol)
-		}
-		return fmt.Sprintf("(%s IS NULL OR %s::text = '' OR %s::text = '0' OR %s::text = '{}')", quotedCol, quotedCol, quotedCol, quotedCol)
-	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_EMPTY:
-		if qb.isUUIDColumn(column) {
-			return fmt.Sprintf("%s IS NOT NULL", quotedCol)
-		}
-		return fmt.Sprintf("(%s IS NOT NULL AND %s::text != '' AND %s::text != '0' AND %s::text != '{}')", quotedCol, quotedCol, quotedCol, quotedCol)
-	default:
-		return ""
-	}
+	var clause strings.Builder
+	writer := newAndWriter(&clause)
+	qb.buildAllFilters(writer, params)
+	qb.buildJSONFilters(writer, params)
+	qb.buildArrayFilters(writer, params)
+	return "(" + clause.String() + ")", nil
 }
 
 // buildAllFilters builds all filter clauses for a given params (reused for filter groups)

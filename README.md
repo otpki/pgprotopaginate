@@ -1,8 +1,8 @@
 # pgprotopaginate
 
-PostgreSQL pagination, filtering, and sorting for Go APIs, powered by Protocol Buffers and pgx.
+PostgreSQL cursor and offset pagination, filtering, sorting, and result counts
+for Go APIs using Protocol Buffers and pgx.
 
-Supports cursor and offset pagination, filtering, sorting, and result counts.
 Use `paginate.ProtoPaginate` with a pgx connection, pool, or transaction and a
 function that converts database models to protobuf messages.
 
@@ -14,6 +14,18 @@ go get github.com/otpki/pgprotopaginate/paginate
 
 Protobuf types come from [Buf Schema Registry](https://buf.build/omnitrust/pgprotopaginate)
 as a Go dependency. No local code generation is required.
+
+## Filtering
+
+- Separate filters use AND. Multiple values in one equality filter match any value.
+- Groups support AND and OR, with the same validation and value types as ordinary filters.
+- Invalid filters return errors.
+- Nested messages and maps require explicit `filterable` or `sortable` annotations
+  and matching database columns. Nested field paths are not supported.
+
+Pagination-info requests check the database model. For standalone metadata, use
+`GetPaginationInfoForModel[Proto, Model]()`; `GetPaginationInfo[Proto]()` checks only
+the protobuf schema.
 
 ## Development
 

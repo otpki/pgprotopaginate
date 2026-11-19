@@ -1552,18 +1552,8 @@ func TestQueryBuilder_FilterGroups_EdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		qb := NewQueryBuilder(params)
-		sql, args, err := qb.BuildSQL()
-		require.NoError(t, err)
-
-		rows, err := pool.Query(t.Context(), sql, args...)
-		require.NoError(t, err)
-		defer rows.Close()
-
-		models, err := ScanRows[TestModel](rows)
-		require.NoError(t, err)
-
-		// Should still work, ignoring the filter with empty column
-		require.Greater(t, len(models), 0)
+		_, _, err = qb.BuildSQL()
+		require.Error(t, err)
 	})
 
 	t.Run("filter group with empty values", func(t *testing.T) {
@@ -1590,18 +1580,8 @@ func TestQueryBuilder_FilterGroups_EdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		qb := NewQueryBuilder(params)
-		sql, args, err := qb.BuildSQL()
-		require.NoError(t, err)
-
-		rows, err := pool.Query(t.Context(), sql, args...)
-		require.NoError(t, err)
-		defer rows.Close()
-
-		models, err := ScanRows[TestModel](rows)
-		require.NoError(t, err)
-
-		// Should still work, ignoring the filter with empty values
-		require.Greater(t, len(models), 0)
+		_, _, err = qb.BuildSQL()
+		require.Error(t, err)
 	})
 
 	t.Run("filter group with UNSPECIFIED operator", func(t *testing.T) {

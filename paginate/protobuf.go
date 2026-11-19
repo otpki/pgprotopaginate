@@ -46,6 +46,21 @@ func GetPaginationInfo[T proto.Message]() (*queryPB.PaginationResponse, error) {
 	return buildPaginationInfoResponse(protoType)
 }
 
+// GetPaginationInfoForModel restricts metadata to fields represented by M.
+// GetPaginationInfo only describes the protobuf schema and its annotations.
+func GetPaginationInfoForModel[T proto.Message, M any]() (*queryPB.PaginationResponse, error) {
+	protoType, err := CreateProtoInstance[T]()
+	if err != nil {
+		return nil, err
+	}
+	var model M
+	columns, err := GetColumnNames(model)
+	if err != nil {
+		return nil, err
+	}
+	return buildPaginationInfoResponse(protoType, columns)
+}
+
 // ProtoPaginateExtended extends ProtoPaginate to support custom joins while keeping
 // automatic field selection from the model and using existing model-to-proto converters.
 func ProtoPaginateExtended[T proto.Message, M any](
@@ -110,24 +125,28 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 		return nil, nil, err
 	}
 
-	// Check if only pagination info is requested
-	if paginationParams.WithPaginationInfoOnly {
-		protoType, err := CreateProtoInstance[T]()
-		if err != nil {
-			return nil, nil, oops.In(ServiceName).Wrapf(err, "creating proto instance")
-		}
-		paginationInfo, err := buildPaginationInfoResponse(protoType)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, paginationInfo, nil
-	}
-
-	// Create a model instance for the builder using the cache
+	// The protobuf may contain hydrated fields that have no database column.
 	var modelType M
 	modelInstance, err := CreateModelInstance(modelType)
 	if err != nil {
 		return nil, nil, oops.In(ServiceName).Wrapf(err, "creating model instance")
+	}
+	columns, err := GetColumnNames(modelInstance)
+	if err != nil {
+		return nil, nil, err
+	}
+	if joinConfig != nil {
+		for _, expression := range joinConfig.AdditionalColumns {
+			columns = append(columns, extractColumnAlias(expression))
+		}
+	}
+	if paginationParams.WithPaginationInfoOnly {
+		protoType, err := CreateProtoInstance[T]()
+		if err != nil {
+			return nil, nil, err
+		}
+		paginationInfo, err := buildPaginationInfoResponse(protoType, columns)
+		return nil, paginationInfo, err
 	}
 
 	builder := NewBuilder().
@@ -311,7 +330,9 @@ func ConvertProtoRequest[T proto.Message](
 		}
 
 		// Convert filter groups to the internal format.
-		convertFilterGroups(req.FilterGroups, params, fd)
+		if err := convertFilterGroups(req.FilterGroups, params, fd); err != nil {
+			return nil, err
+		}
 	}
 
 	return params, nil
@@ -374,32 +395,48 @@ func convertFilters(
 	params *PaginationParams,
 	fd protoreflect.MessageDescriptor,
 ) error {
+	// Each entry is a separate predicate. Keep repeated column/operator pairs
+	// in individual AND groups instead of merging or overwriting them.
+	type filterKey struct {
+		column   string
+		operator queryPB.FilterOperator
+	}
+	seen := make(map[filterKey]bool)
 	for _, filter := range filters {
-		// validate field exists and is filterable
-		field := fd.Fields().ByTextName(filter.Column)
-		if field == nil {
-			return oops.In(ServiceName).Errorf("field '%s' not found in message", filter.Column)
+		if filter == nil || filter.Column == "" {
+			return oops.In(ServiceName).New("filter and column are required")
 		}
-
-		if !isFieldFilterable(field) {
-			return oops.In(ServiceName).Errorf("field '%s' is not filterable", filter.Column)
+		if fd != nil {
+			field := fd.Fields().ByTextName(filter.Column)
+			if field == nil {
+				return oops.In(ServiceName).Errorf("field '%s' not found in message", filter.Column)
+			}
+			if !isFieldFilterable(field) {
+				return oops.In(ServiceName).Errorf("field '%s' is not filterable", filter.Column)
+			}
+			if !isFilterOperatorAllowed(field, filter.Operator) {
+				return oops.In(ServiceName).Errorf("operator %v not allowed for field '%s'", filter.Operator, filter.Column)
+			}
 		}
-
-		// validate operator is allowed for this field
-		if !isFilterOperatorAllowed(field, filter.Operator) {
-			return oops.In(ServiceName).Errorf("operator %v not allowed for field '%s'", filter.Operator, filter.Column)
-		}
-
-		// convert filter values
 		values, err := convertFilterValues(filter.Values)
 		if err != nil {
 			return oops.In(ServiceName).Wrapf(err, "converting filter values for field '%s'", filter.Column)
 		}
-
-		// add filter to appropriate map based on operator
+		if err := validateFilterArity(filter.Operator, len(values)); err != nil {
+			return err
+		}
+		key := filterKey{filter.Column, filter.Operator}
+		if seen[key] {
+			params.FilterGroups = append(params.FilterGroups, &FilterGroup{
+				Operator: queryPB.LogicalOperator_LOGICAL_OPERATOR_AND,
+				Filters:  []*queryPB.Filter{filter},
+			})
+			continue
+		}
 		if err := addFilterToParams(filter, values, params); err != nil {
 			return oops.In(ServiceName).Wrapf(err, "adding filter for field '%s'", filter.Column)
 		}
+		seen[key] = true
 	}
 
 	return nil
@@ -409,6 +446,9 @@ func convertFilterValues(values []*queryPB.FilterValue) ([]any, error) {
 	result := make([]any, len(values))
 
 	for i, value := range values {
+		if value == nil {
+			return nil, oops.In(ServiceName).Errorf("nil filter value at index %d", i)
+		}
 		switch {
 		case value.StringValue != "":
 			result[i] = value.StringValue
@@ -419,8 +459,14 @@ func convertFilterValues(values []*queryPB.FilterValue) ([]any, error) {
 		case value.BoolValue:
 			result[i] = value.BoolValue
 		case value.TimestampValue != nil:
+			if err := value.TimestampValue.CheckValid(); err != nil {
+				return nil, err
+			}
 			result[i] = value.TimestampValue.AsTime()
 		case value.DurationValue != nil:
+			if err := value.DurationValue.CheckValid(); err != nil {
+				return nil, err
+			}
 			result[i] = value.DurationValue.AsDuration()
 		case value.BytesValue != nil:
 			result[i] = value.BytesValue
@@ -561,27 +607,63 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 func convertFilterGroups(
 	filterGroups []*queryPB.FilterGroup,
 	params *PaginationParams,
-	_ protoreflect.MessageDescriptor,
-) {
+	fd protoreflect.MessageDescriptor,
+) error {
 	for _, group := range filterGroups {
 		if group == nil {
 			continue
 		}
-
-		// Convert filter group to internal format
-		internalGroup := &FilterGroup{
+		switch group.Operator {
+		case queryPB.LogicalOperator_LOGICAL_OPERATOR_UNSPECIFIED,
+			queryPB.LogicalOperator_LOGICAL_OPERATOR_AND,
+			queryPB.LogicalOperator_LOGICAL_OPERATOR_OR:
+		default:
+			return oops.In(ServiceName).Errorf("unsupported logical operator: %v", group.Operator)
+		}
+		if err := convertFilters(group.Filters, NewPaginationParams(), fd); err != nil {
+			return err
+		}
+		params.FilterGroups = append(params.FilterGroups, &FilterGroup{
 			Operator: group.Operator,
 			Filters:  group.Filters,
-		}
-
-		params.FilterGroups = append(params.FilterGroups, internalGroup)
+		})
 	}
+	return nil
+}
+
+// validateFilterArity prevents malformed predicates from being silently dropped.
+func validateFilterArity(operator queryPB.FilterOperator, count int) error {
+	switch operator {
+	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL,
+		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_NULL,
+		queryPB.FilterOperator_FILTER_OPERATOR_IS_EMPTY,
+		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_EMPTY:
+		if count == 0 {
+			return nil
+		}
+	case queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN:
+		if count == 2 {
+			return nil
+		}
+	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN,
+		queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN_OR_EQUAL,
+		queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN,
+		queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN_OR_EQUAL:
+		if count == 1 {
+			return nil
+		}
+	default:
+		if count > 0 {
+			return nil
+		}
+	}
+	return oops.In(ServiceName).Errorf("invalid value count %d for operator %v", count, operator)
 }
 
 func isFieldSortable(field protoreflect.FieldDescriptor) bool {
 	opts := field.Options()
 	if opts == nil {
-		return true // allow sorting by default
+		return isFieldQueryableByDefault(field) // explicit annotations can opt in
 	}
 
 	// check for our custom sortable option
@@ -593,13 +675,13 @@ func isFieldSortable(field protoreflect.FieldDescriptor) bool {
 		}
 	}
 
-	return true // allow sorting by default if not explicitly set
+	return isFieldQueryableByDefault(field) // explicit annotations can opt in if not explicitly set
 }
 
 func isFieldFilterable(field protoreflect.FieldDescriptor) bool {
 	opts := field.Options()
 	if opts == nil {
-		return true // allow filtering by default
+		return isFieldQueryableByDefault(field) // explicit annotations can opt in
 	}
 
 	// check for our custom filterable option
@@ -611,7 +693,24 @@ func isFieldFilterable(field protoreflect.FieldDescriptor) bool {
 		}
 	}
 
-	return true // allow filtering by default if not explicitly set
+	return isFieldQueryableByDefault(field) // explicit annotations can opt in if not explicitly set
+}
+
+// Nested messages need an explicit database representation. Timestamp and
+// duration are the well-known messages with native scalar SQL representations.
+func isFieldQueryableByDefault(field protoreflect.FieldDescriptor) bool {
+	if field.IsMap() {
+		return false
+	}
+	if field.Kind() != protoreflect.MessageKind && field.Kind() != protoreflect.GroupKind {
+		return true
+	}
+	switch field.Message().FullName() {
+	case "google.protobuf.Timestamp", "google.protobuf.Duration":
+		return true
+	default:
+		return false
+	}
 }
 
 func sortEntryToOperator(sortEntry *queryPB.SortEntry) queryPB.SortOperator {
@@ -687,7 +786,7 @@ func isFilterOperatorAllowed(field protoreflect.FieldDescriptor, operator queryP
 }
 
 // buildPaginationInfoResponse creates a pagination info response using cached field information
-func buildPaginationInfoResponse[T proto.Message](protoType T) (*queryPB.PaginationResponse, error) {
+func buildPaginationInfoResponse[T proto.Message](protoType T, columnSets ...[]string) (*queryPB.PaginationResponse, error) {
 	// Get field information from cache
 	fieldInfos := GetFieldInfo(protoType)
 
@@ -702,6 +801,12 @@ func buildPaginationInfoResponse[T proto.Message](protoType T) (*queryPB.Paginat
 			AllowedSortOperators:   info.AllowedSortOperators,
 			FieldType:              info.FieldType,
 			Repeated:               info.Repeated,
+		}
+		if len(columnSets) > 0 && !slices.Contains(columnSets[0], info.Name) {
+			entry.Filterable = false
+			entry.Sortable = false
+			entry.AllowedFilterOperators = nil
+			entry.AllowedSortOperators = nil
 		}
 		entries = append(entries, entry)
 	}
