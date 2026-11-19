@@ -6,6 +6,7 @@ require (
 	buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119180403-f3c95639ea09.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/peterldowns/pgtestdb v0.1.1
 	github.com/samber/oops v1.23.2
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/protobuf v1.36.12

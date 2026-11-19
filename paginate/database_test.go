@@ -1,18 +1,19 @@
 package paginate
 
 import (
-	"context"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/peterldowns/pgtestdb"
 	"github.com/stretchr/testify/require"
+
+	_ "github.com/jackc/pgx/v5/stdlib" // Register the database/sql driver used by pgtestdb.
 )
 
-// Each test gets its own schema, including tests running in parallel.
+// pgtestdb gives each test an isolated database and handles its cleanup.
 func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("PGPROTOPAGINATE_TEST_DSN")
@@ -22,24 +23,24 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		dsn = "postgres://postgres:postgres@localhost:15433/pgprotopaginate?sslmode=disable"
 	}
-	ctx := t.Context()
-	admin, err := pgxpool.New(ctx, dsn)
+	connection, err := url.Parse(dsn)
 	require.NoError(t, err)
-	t.Cleanup(admin.Close)
-	schema := "test_" + uuid.New().String()
-	quotedSchema := pgx.Identifier{schema}.Sanitize()
-	_, err = admin.Exec(ctx, "CREATE SCHEMA "+quotedSchema)
-	require.NoError(t, err, "start the test database with docker compose up -d --wait")
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, err := admin.Exec(cleanupCtx, "DROP SCHEMA "+quotedSchema+" CASCADE")
-		require.NoError(t, err)
-	})
-	config, err := pgxpool.ParseConfig(dsn)
-	require.NoError(t, err)
-	config.ConnConfig.RuntimeParams["search_path"] = quotedSchema
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	require.NotNil(t, connection.User, "test DSN must include a database user")
+	port := connection.Port()
+	if port == "" {
+		port = "5432"
+	}
+	password, _ := connection.User.Password()
+	config := pgtestdb.Custom(t, pgtestdb.Config{
+		DriverName: "pgx",
+		Host:       connection.Hostname(),
+		Port:       port,
+		User:       connection.User.Username(),
+		Password:   password,
+		Database:   strings.TrimPrefix(connection.Path, "/"),
+		Options:    connection.RawQuery,
+	}, pgtestdb.NoopMigrator{})
+	pool, err := pgxpool.New(t.Context(), config.URL())
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return pool
