@@ -3,7 +3,7 @@ module github.com/otpki/pgprotopaginate
 go 1.27.2
 
 require (
-	buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119154352-b8853a67cecf.2
+	buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119180403-f3c95639ea09.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/samber/oops v1.23.2

@@ -10,6 +10,10 @@ extend google.protobuf.FieldOptions {
   optional bool sortable = 60002;
   repeated FilterOperator allowed_filter_operators = 60003;
   repeated SortOperator allowed_sort_operators = 60004;
+  // Database column or qualified table.column identifier for this field.
+  optional string column = 60005;
+  // Expose the children of a singular message as dotted query field paths.
+  optional bool nested = 60006;
 }
 
 enum SortOrder {

@@ -319,7 +319,11 @@ func getFieldDescriptor(fd protoreflect.MessageDescriptor, columnName string) pr
 	if fd == nil {
 		return nil
 	}
-	return fd.Fields().ByTextName(columnName)
+	info, err := queryField(fd, columnName)
+	if err != nil {
+		return nil
+	}
+	return info.Descriptor
 }
 
 func convertValuesToProtobufWithType(values []any, field protoreflect.FieldDescriptor) []*queryPB.FilterValue {

@@ -1,5 +1,5 @@
-buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119154352-b8853a67cecf.2 h1:gid6ESZCE86dIlLSQf0gGlLw3LNL6t76isrxZ1GtkyI=
-buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119154352-b8853a67cecf.2/go.mod h1:fE/5UumaGnmknXakF/ed7rRg5Ux6sw5oo/BmHSRxhrs=
+buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119180403-f3c95639ea09.2 h1:3CSutassrRPx8WAh8A1nJQUZPgDxmFWaxCfMFBfVMQI=
+buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go v1.36.12-20261119180403-f3c95639ea09.2/go.mod h1:fE/5UumaGnmknXakF/ed7rRg5Ux6sw5oo/BmHSRxhrs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=

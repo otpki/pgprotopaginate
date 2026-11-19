@@ -20,8 +20,9 @@ as a Go dependency. No local code generation is required.
 - Separate filters use AND. Multiple values in one equality filter match any value.
 - Groups support AND and OR, with the same validation and value types as ordinary filters.
 - Invalid filters return errors.
-- Nested messages and maps require explicit `filterable` or `sortable` annotations
-  and matching database columns. Nested field paths are not supported.
+- Mark singular messages `nested = true` to expose paths such as `details.score`.
+- Use `column` to map fields to database columns, including table aliases.
+- Fields are filterable and sortable by default unless explicitly disabled.
 
 Pagination-info requests check the database model. For standalone metadata, use
 `GetPaginationInfoForModel[Proto, Model]()`; `GetPaginationInfo[Proto]()` checks only

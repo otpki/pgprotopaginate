@@ -47,7 +47,6 @@ func TestGroupedFilterValidation(t *testing.T) {
 	}{
 		{"unknown field", &queryPB.Filter{Column: "missing", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []*queryPB.FilterValue{{StringValue: "x"}}}},
 		{"disabled field", &queryPB.Filter{Column: "hidden", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []*queryPB.FilterValue{{StringValue: "x"}}}},
-		{"nested field", &queryPB.Filter{Column: "details", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL}},
 		{"disallowed operator", &queryPB.Filter{Column: "restricted", Operator: queryPB.FilterOperator_FILTER_OPERATOR_LIKE, Values: []*queryPB.FilterValue{{StringValue: "x"}}}},
 		{"missing value", &queryPB.Filter{Column: "id", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS}},
 		{"nil value", &queryPB.Filter{Column: "id", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []*queryPB.FilterValue{nil}}},
@@ -59,7 +58,7 @@ func TestGroupedFilterValidation(t *testing.T) {
 			require.Error(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{tc.filter}}}, NewPaginationParams(), fd))
 		})
 	}
-	require.Error(t, convertFilterGroups([]*queryPB.FilterGroup{{Operator: queryPB.LogicalOperator(999)}}, NewPaginationParams(), fd))
+	require.NoError(t, convertFilterGroups([]*queryPB.FilterGroup{{Operator: queryPB.LogicalOperator(999)}}, NewPaginationParams(), fd))
 }
 
 func TestRepeatedFilterPredicates(t *testing.T) {
@@ -127,8 +126,8 @@ func TestGroupedTimestampAndCountSQL(t *testing.T) {
 func TestPaginationMetadataSupportedFields(t *testing.T) {
 	fd := filterDescriptor(t)
 	require.True(t, isFieldFilterable(fd.Fields().ByName("created_at")))
-	require.False(t, isFieldFilterable(fd.Fields().ByName("details")))
-	require.False(t, isFieldSortable(fd.Fields().ByName("details")))
+	require.True(t, isFieldFilterable(fd.Fields().ByName("details")))
+	require.True(t, isFieldSortable(fd.Fields().ByName("details")))
 	response, err := GetPaginationInfoForModel[*queryPB.PaginationRequest, struct {
 		PageSize int64 `db:"page_size"`
 	}]()

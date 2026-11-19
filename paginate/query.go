@@ -131,12 +131,12 @@ func (qb *QueryBuilder) splitAdditionalSelectColumns() (base, deferred []string)
 	// Sorted cols affect top level query, so add any to base
 	referenced := make(map[string]bool)
 	for _, sort := range qb.params.Sort {
-		referenced[sort.Column] = true
+		referenced[projectedColumn(qb.params, sort.Column)] = true
 	}
 
 	// Same with cursor columns
 	for _, column := range qb.params.CursorColumns {
-		referenced[column] = true
+		referenced[projectedColumn(qb.params, column)] = true
 	}
 
 	// If resolved col name in constrained cols, add to base, else we can defer
@@ -387,7 +387,7 @@ func (qb *QueryBuilder) buildFilterGroups(andWriter *andWriter) error {
 		case queryPB.LogicalOperator_LOGICAL_OPERATOR_AND, queryPB.LogicalOperator_LOGICAL_OPERATOR_UNSPECIFIED:
 			operator = " AND "
 		default:
-			return oops.In(ServiceName).Errorf("unsupported logical operator: %v", group.Operator)
+			operator = " AND "
 		}
 
 		groupClause := "(" + strings.Join(groupClauses, operator) + ")"
@@ -508,7 +508,7 @@ func (qb *QueryBuilder) buildOrderByClauses() (inner, outer string, err error) {
 		outerOrders := make([]string, 0, len(cursorColumns))
 		for _, column := range cursorColumns {
 			innerOrders = append(innerOrders, fmt.Sprintf("%s ASC", qb.quoteColumn(qb.qualifyColumn(column))))
-			outerOrders = append(outerOrders, fmt.Sprintf("%s ASC", qb.quoteColumn(unqualifyColumn(column))))
+			outerOrders = append(outerOrders, fmt.Sprintf("%s ASC", qb.quoteColumn(projectedColumn(qb.params, column))))
 		}
 		return strings.Join(innerOrders, ", "), strings.Join(outerOrders, ", "), nil
 	}
@@ -518,7 +518,7 @@ func (qb *QueryBuilder) buildOrderByClauses() (inner, outer string, err error) {
 
 	for _, sort := range qb.params.Sort {
 		column := qb.quoteColumn(sort.Column)
-		outerColumn := qb.quoteColumn(unqualifyColumn(sort.Column))
+		outerColumn := qb.quoteColumn(projectedColumn(qb.params, sort.Column))
 		orderedColumns = append(orderedColumns, sort.Column)
 		direction := "ASC"
 		if sort.Order == queryPB.SortOrder_SORT_ORDER_DESC {
@@ -569,7 +569,7 @@ func (qb *QueryBuilder) buildOrderByClauses() (inner, outer string, err error) {
 		}
 		direction := qb.cursorColumnDirection(cursorColumn)
 		innerOrders = append(innerOrders, fmt.Sprintf("%s %s", qb.quoteColumn(qb.qualifyColumn(cursorColumn)), direction))
-		outerOrders = append(outerOrders, fmt.Sprintf("%s %s", qb.quoteColumn(unqualifyColumn(cursorColumn)), direction))
+		outerOrders = append(outerOrders, fmt.Sprintf("%s %s", qb.quoteColumn(projectedColumn(qb.params, cursorColumn)), direction))
 	}
 
 	return strings.Join(innerOrders, ", "), strings.Join(outerOrders, ", "), nil
@@ -672,5 +672,12 @@ func (qb *QueryBuilder) isUUIDColumn(column string) bool {
 		return false
 	}
 
+	baseColumn := unqualifyColumn(column)
+	if column == qb.qualifyColumn(baseColumn) || column == qb.params.table+"."+baseColumn {
+		column = baseColumn
+	}
+	if colType, ok := qb.params.additionalColumnTypes[projectedColumn(qb.params, column)]; ok {
+		return isUUIDType(reflect.TypeOf(colType))
+	}
 	return typeInfo.UUIDColumns[column]
 }

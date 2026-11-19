@@ -14,17 +14,37 @@ func GenerateNextTokenFromModel[T any](model T, params *PaginationParams) (strin
 		return "", nil
 	}
 
-	cursorColumns, err := resolveCursorColumnsForModel(params, model)
+	cursorModel := any(model)
+	if _, ok := cursorModel.(map[string]any); ok {
+		cursorModel = params.model
+	}
+	cursorColumns, err := resolveCursorColumnsForModel(params, cursorModel)
 	if err != nil {
 		return "", err
 	}
 
-	// extract cursor values from model using map interface
-	cursorValues, err := ExtractModelValues(model, cursorColumns)
-	if err != nil {
-		return "", oops.In(ServiceName).Wrapf(err, "extracting cursor values from model")
+	var values map[string]any
+	if row, ok := any(model).(map[string]any); ok {
+		values = row
+	} else {
+		columns, err := GetColumnNames(model)
+		if err != nil {
+			return "", err
+		}
+		values, err = ExtractModelValues(model, columns)
+		if err != nil {
+			return "", oops.In(ServiceName).Wrapf(err, "extracting cursor values from model")
+		}
 	}
-
+	cursorValues := make(map[string]any, len(cursorColumns))
+	for _, column := range cursorColumns {
+		name := projectedColumn(params, column)
+		value, ok := values[name]
+		if !ok {
+			return "", oops.In(ServiceName).Errorf("cursor column %s not found in row", name)
+		}
+		cursorValues[column] = value
+	}
 	return generateToken(params, cursorValues, cursorColumns)
 }
 
@@ -63,8 +83,13 @@ func appendDefaultTieBreaker(model any, cursorColumns []string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	if tieBreaker == "" || slices.Contains(cursorColumns, tieBreaker) {
+	if tieBreaker == "" {
 		return cursorColumns, nil
+	}
+	for _, column := range cursorColumns {
+		if unqualifyColumn(column) == tieBreaker {
+			return cursorColumns, nil
+		}
 	}
 
 	return append(cursorColumns, tieBreaker), nil

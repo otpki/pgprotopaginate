@@ -3,6 +3,7 @@ package paginate
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"slices"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
@@ -18,10 +19,10 @@ type DBConn interface {
 }
 
 func ProtoPaginate[T proto.Message, M any](ctx context.Context, pgxConn DBConn, logger *slog.Logger, tableName string, query *queryPB.PaginationRequest, convertFn func(*M) (T, error)) ([]T, *queryPB.PaginationResponse, error) {
-	return protoPaginateWithRowConverter[T, M](ctx, pgxConn, logger, tableName, query, func(rows pgx.Rows) ([]T, error) {
+	return protoPaginateWithRowConverter[T, M](ctx, pgxConn, logger, tableName, query, func(rows pgx.Rows) ([]T, []map[string]any, error) {
 		models, err := ScanRows[M](rows)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// convert model structs to protobuf messages
@@ -29,11 +30,12 @@ func ProtoPaginate[T proto.Message, M any](ctx context.Context, pgxConn DBConn, 
 		for i, model := range models {
 			protoModel, err := convertFn(&model)
 			if err != nil {
-				return nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
+				return nil, nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
 			}
 			protoModels[i] = protoModel
 		}
-		return protoModels, nil
+		cursorRows, err := cursorRowValues(models, nil, query.GetWithTokenPagination())
+		return protoModels, cursorRows, err
 	}, nil)
 }
 
@@ -72,7 +74,7 @@ func ProtoPaginateExtended[T proto.Message, M any](
 	convertFn func(*M, map[string]any) (T, error), // Enhanced converter with additional data
 	joinConfig *ExtendedJoinConfig,
 ) ([]T, *queryPB.PaginationResponse, error) {
-	return protoPaginateWithRowConverter[T, M](ctx, pgxConn, logger, tableName, query, func(rows pgx.Rows) ([]T, error) {
+	return protoPaginateWithRowConverter[T, M](ctx, pgxConn, logger, tableName, query, func(rows pgx.Rows) ([]T, []map[string]any, error) {
 		// Use ScanRowsWithAdditional to handle both model fields and additional join columns
 		var additionalColumns []string
 		var additionalColumnTypes map[string]any
@@ -90,7 +92,7 @@ func ProtoPaginateExtended[T proto.Message, M any](
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Convert using the enhanced converter function with additional data
@@ -102,11 +104,12 @@ func ProtoPaginateExtended[T proto.Message, M any](
 			}
 			protoModel, err := convertFn(&model, additionalData)
 			if err != nil {
-				return nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
+				return nil, nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
 			}
 			protoModels[i] = protoModel
 		}
-		return protoModels, nil
+		cursorRows, err := cursorRowValues(models, allAdditionalData, query.GetWithTokenPagination())
+		return protoModels, cursorRows, err
 	}, joinConfig)
 }
 
@@ -117,7 +120,7 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 	logger *slog.Logger,
 	tableName string,
 	query *queryPB.PaginationRequest,
-	convertFn func(pgx.Rows) ([]T, error),
+	convertFn func(pgx.Rows) ([]T, []map[string]any, error),
 	joinConfig *ExtendedJoinConfig,
 ) ([]T, *queryPB.PaginationResponse, error) {
 	paginationParams, err := ConvertProtoRequest[T](query)
@@ -137,7 +140,7 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 	}
 	if joinConfig != nil {
 		for _, expression := range joinConfig.AdditionalColumns {
-			columns = append(columns, extractColumnAlias(expression))
+			columns = append(columns, extractColumnAlias(expression), selectedColumnSource(expression))
 		}
 	}
 	if paginationParams.WithPaginationInfoOnly {
@@ -220,7 +223,7 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 	defer rows.Close()
 
 	// Convert rows using the provided conversion function
-	protoModels, err := convertFn(rows)
+	protoModels, cursorRows, err := convertFn(rows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -234,9 +237,18 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 		defer countRows.Close()
 	}
 
-	protoModels, resp, err := CreatePaginationResponse(protoModels, countRows, builtParams)
+	// Tokens must use database row values, not converted protobuf field names.
+	responseParams := *builtParams
+	responseParams.WithTokenPagination = false
+	protoModels, resp, err := CreatePaginationResponse(protoModels, countRows, &responseParams)
 	if err != nil {
 		return nil, nil, err
+	}
+	if builtParams.WithTokenPagination && resp.HasMore && len(protoModels) > 0 {
+		resp.NextPageToken, err = GenerateNextTokenFromModel(cursorRows[len(protoModels)-1], builtParams)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	if ownsTx {
 		if err := tx.Commit(ctx); err != nil {
@@ -245,6 +257,28 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 	}
 
 	return protoModels, resp, nil
+}
+
+// cursorRowValues retains database column names through protobuf conversion.
+func cursorRowValues[M any](models []M, additional []map[string]any, enabled bool) ([]map[string]any, error) {
+	if !enabled {
+		return nil, nil
+	}
+	rows := make([]map[string]any, len(models))
+	for i, model := range models {
+		columns, err := GetColumnNames(model)
+		if err != nil {
+			return nil, err
+		}
+		rows[i], err = ExtractModelValues(model, columns)
+		if err != nil {
+			return nil, err
+		}
+		if i < len(additional) {
+			maps.Copy(rows[i], additional[i])
+		}
+	}
+	return rows, nil
 }
 
 // beginTx reuses an explicit pgx.Tx, otherwise it opens a new transaction.
@@ -344,11 +378,14 @@ func convertSortEntries(
 	fd protoreflect.MessageDescriptor,
 ) error {
 	for _, entry := range sortEntries {
-		// validate field exists and is sortable
-		field := fd.Fields().ByTextName(entry.Column)
-		if field == nil {
-			return oops.In(ServiceName).Errorf("field '%s' not found in message", entry.Column)
+		if entry == nil {
+			return oops.In(ServiceName).New("sort entry is required")
 		}
+		info, err := queryField(fd, entry.Column)
+		if err != nil {
+			return err
+		}
+		field := info.Descriptor
 
 		if !isFieldSortable(field) {
 			return oops.In(ServiceName).Errorf("field '%s' is not sortable", entry.Column)
@@ -360,7 +397,7 @@ func convertSortEntries(
 
 		// create SortEntry
 		sortEntry := &SortEntry{
-			Column: entry.Column,
+			Column: info.Column,
 			Order:  entry.Order,
 		}
 
@@ -407,18 +444,24 @@ func convertFilters(
 			return oops.In(ServiceName).New("filter and column are required")
 		}
 		if fd != nil {
-			field := fd.Fields().ByTextName(filter.Column)
-			if field == nil {
-				return oops.In(ServiceName).Errorf("field '%s' not found in message", filter.Column)
+			info, err := queryField(fd, filter.Column)
+			if err != nil {
+				return err
 			}
+			field := info.Descriptor
 			if !isFieldFilterable(field) {
 				return oops.In(ServiceName).Errorf("field '%s' is not filterable", filter.Column)
 			}
 			if !isFilterOperatorAllowed(field, filter.Operator) {
 				return oops.In(ServiceName).Errorf("operator %v not allowed for field '%s'", filter.Operator, filter.Column)
 			}
+			filter = mapFilter(filter, info)
 		}
-		values, err := convertFilterValues(filter.Values)
+		filterValues := filter.Values
+		if filterIgnoresValues(filter.Operator) {
+			filterValues = nil
+		}
+		values, err := convertFilterValues(filterValues)
 		if err != nil {
 			return oops.In(ServiceName).Wrapf(err, "converting filter values for field '%s'", filter.Column)
 		}
@@ -613,34 +656,48 @@ func convertFilterGroups(
 		if group == nil {
 			continue
 		}
-		switch group.Operator {
-		case queryPB.LogicalOperator_LOGICAL_OPERATOR_UNSPECIFIED,
-			queryPB.LogicalOperator_LOGICAL_OPERATOR_AND,
-			queryPB.LogicalOperator_LOGICAL_OPERATOR_OR:
-		default:
-			return oops.In(ServiceName).Errorf("unsupported logical operator: %v", group.Operator)
-		}
 		if err := convertFilters(group.Filters, NewPaginationParams(), fd); err != nil {
 			return err
 		}
+		mapped := make([]*queryPB.Filter, len(group.Filters))
+		for i, filter := range group.Filters {
+			if fd == nil {
+				mapped[i] = proto.CloneOf(filter)
+				continue
+			}
+			info, err := queryField(fd, filter.Column)
+			if err != nil {
+				return err
+			}
+			mapped[i] = mapFilter(filter, info)
+		}
 		params.FilterGroups = append(params.FilterGroups, &FilterGroup{
 			Operator: group.Operator,
-			Filters:  group.Filters,
+			Filters:  mapped,
 		})
 	}
 	return nil
 }
 
-// validateFilterArity prevents malformed predicates from being silently dropped.
-func validateFilterArity(operator queryPB.FilterOperator, count int) error {
+// filterIgnoresValues matches PostgreSQL's unary null and empty predicates.
+func filterIgnoresValues(operator queryPB.FilterOperator) bool {
 	switch operator {
 	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL,
 		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_NULL,
 		queryPB.FilterOperator_FILTER_OPERATOR_IS_EMPTY,
 		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_EMPTY:
-		if count == 0 {
-			return nil
-		}
+		return true
+	default:
+		return false
+	}
+}
+
+// validateFilterArity prevents malformed predicates from being silently dropped.
+func validateFilterArity(operator queryPB.FilterOperator, count int) error {
+	if filterIgnoresValues(operator) {
+		return nil
+	}
+	switch operator {
 	case queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN:
 		if count == 2 {
 			return nil
@@ -663,7 +720,7 @@ func validateFilterArity(operator queryPB.FilterOperator, count int) error {
 func isFieldSortable(field protoreflect.FieldDescriptor) bool {
 	opts := field.Options()
 	if opts == nil {
-		return isFieldQueryableByDefault(field) // explicit annotations can opt in
+		return true // allow querying unless explicitly disabled
 	}
 
 	// check for our custom sortable option
@@ -675,13 +732,13 @@ func isFieldSortable(field protoreflect.FieldDescriptor) bool {
 		}
 	}
 
-	return isFieldQueryableByDefault(field) // explicit annotations can opt in if not explicitly set
+	return true // allow querying unless explicitly disabled
 }
 
 func isFieldFilterable(field protoreflect.FieldDescriptor) bool {
 	opts := field.Options()
 	if opts == nil {
-		return isFieldQueryableByDefault(field) // explicit annotations can opt in
+		return true // allow querying unless explicitly disabled
 	}
 
 	// check for our custom filterable option
@@ -693,24 +750,7 @@ func isFieldFilterable(field protoreflect.FieldDescriptor) bool {
 		}
 	}
 
-	return isFieldQueryableByDefault(field) // explicit annotations can opt in if not explicitly set
-}
-
-// Nested messages need an explicit database representation. Timestamp and
-// duration are the well-known messages with native scalar SQL representations.
-func isFieldQueryableByDefault(field protoreflect.FieldDescriptor) bool {
-	if field.IsMap() {
-		return false
-	}
-	if field.Kind() != protoreflect.MessageKind && field.Kind() != protoreflect.GroupKind {
-		return true
-	}
-	switch field.Message().FullName() {
-	case "google.protobuf.Timestamp", "google.protobuf.Duration":
-		return true
-	default:
-		return false
-	}
+	return true // allow querying unless explicitly disabled
 }
 
 func sortEntryToOperator(sortEntry *queryPB.SortEntry) queryPB.SortOperator {
@@ -802,7 +842,7 @@ func buildPaginationInfoResponse[T proto.Message](protoType T, columnSets ...[]s
 			FieldType:              info.FieldType,
 			Repeated:               info.Repeated,
 		}
-		if len(columnSets) > 0 && !slices.Contains(columnSets[0], info.Name) {
+		if len(columnSets) > 0 && !hasQueryColumn(columnSets[0], info.Column) {
 			entry.Filterable = false
 			entry.Sortable = false
 			entry.AllowedFilterOperators = nil
