@@ -359,7 +359,7 @@ func ConvertProtoRequest[T proto.Message](
 		}
 
 		// convert filters with validation
-		if err := convertFilters(req.Filters, params, fd); err != nil {
+		if err := convertFilters(req.Filters, params, fd, false); err != nil {
 			return nil, err
 		}
 
@@ -431,6 +431,7 @@ func convertFilters(
 	filters []*queryPB.Filter,
 	params *PaginationParams,
 	fd protoreflect.MessageDescriptor,
+	booleanColumn bool,
 ) error {
 	// Each entry is a separate predicate. Keep repeated column/operator pairs
 	// in individual AND groups instead of merging or overwriting them.
@@ -449,6 +450,7 @@ func convertFilters(
 				return err
 			}
 			field := info.Descriptor
+			booleanColumn = field.Kind() == protoreflect.BoolKind
 			if !isFieldFilterable(field) {
 				return oops.In(ServiceName).Errorf("field '%s' is not filterable", filter.Column)
 			}
@@ -461,7 +463,7 @@ func convertFilters(
 		if filterIgnoresValues(filter.Operator) {
 			filterValues = nil
 		}
-		values, err := convertFilterValues(filterValues)
+		values, err := convertFilterValues(filterValues, booleanColumn)
 		if err != nil {
 			return oops.In(ServiceName).Wrapf(err, "converting filter values for field '%s'", filter.Column)
 		}
@@ -485,7 +487,7 @@ func convertFilters(
 	return nil
 }
 
-func convertFilterValues(values []*queryPB.FilterValue) ([]any, error) {
+func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool) ([]any, error) {
 	result := make([]any, len(values))
 
 	for i, value := range values {
@@ -513,6 +515,10 @@ func convertFilterValues(values []*queryPB.FilterValue) ([]any, error) {
 			result[i] = value.DurationValue.AsDuration()
 		case value.BytesValue != nil:
 			result[i] = value.BytesValue
+		case booleanColumn:
+			// Proto3 scalar fields have no presence: false is encoded as an
+			// empty FilterValue. Only a boolean target can disambiguate it.
+			result[i] = false
 		default:
 			return nil, oops.In(ServiceName).Errorf("empty filter value at index %d", i)
 		}
@@ -656,7 +662,7 @@ func convertFilterGroups(
 		if group == nil {
 			continue
 		}
-		if err := convertFilters(group.Filters, NewPaginationParams(), fd); err != nil {
+		if err := convertFilters(group.Filters, NewPaginationParams(), fd, false); err != nil {
 			return err
 		}
 		mapped := make([]*queryPB.Filter, len(group.Filters))

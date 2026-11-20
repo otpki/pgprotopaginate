@@ -21,7 +21,7 @@ func TestDefaultMessageAndMapPermissions(t *testing.T) {
 		require.True(t, isFieldSortable(field))
 	}
 	params := NewPaginationParams()
-	require.NoError(t, convertFilters([]*queryPB.Filter{{Column: "details", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL}}, params, fd))
+	require.NoError(t, convertFilters([]*queryPB.Filter{{Column: "details", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL}}, params, fd, false))
 	require.NoError(t, convertSortEntries([]*queryPB.SortEntry{{Column: "details"}}, params, fd))
 	require.Equal(t, []string{"details"}, params.IsNull)
 	// Querying the whole message does not implicitly expose its children.
@@ -66,7 +66,7 @@ func TestUnaryFilterIgnoresExtraValues(t *testing.T) {
 				if grouped {
 					require.NoError(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{filter}}}, params, annotatedDescriptor()))
 				} else {
-					require.NoError(t, convertFilters([]*queryPB.Filter{filter}, params, annotatedDescriptor()))
+					require.NoError(t, convertFilters([]*queryPB.Filter{filter}, params, annotatedDescriptor(), false))
 				}
 				sql, args, err := NewBuilder().Table("mapped_rows").Model(annotatedDBRow{}).FromPaginationParams(params).BuildCountSQL()
 				require.NoError(t, err)
