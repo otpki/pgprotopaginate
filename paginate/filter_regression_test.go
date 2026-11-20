@@ -105,7 +105,7 @@ func TestGroupedTimestampAndCountSQL(t *testing.T) {
 		Operator: queryPB.LogicalOperator_LOGICAL_OPERATOR_OR,
 		Filters: []*queryPB.Filter{
 			{Column: "created_at", Operator: queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN, Values: []*queryPB.FilterValue{{TimestampValue: timestamppb.New(cutoff)}}},
-			{Column: "id", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []*queryPB.FilterValue{{IntValue: 1}, {IntValue: 2}}},
+			{Column: "id", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IN, Values: []*queryPB.FilterValue{{IntValue: 1}, {IntValue: 2}}},
 		},
 	}}, params, filterDescriptor(t)))
 	builder := NewBuilder().Table("rows").Model(&struct {
@@ -235,7 +235,7 @@ func TestRepeatedFilterResults(t *testing.T) {
 		want          []int64
 	}{
 		{"equality entries AND", queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, []int64{1}, []int64{2}, []int64{}},
-		{"equality values ANY", queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, []int64{1, 2}, nil, []int64{1, 2}},
+		{"IN values ANY", queryPB.FilterOperator_FILTER_OPERATOR_IN, []int64{1, 2}, nil, []int64{1, 2}},
 		{"ranges retain stricter first predicate", queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN, []int64{3}, []int64{1}, []int64{4, 5}},
 		{"between intersect", queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN, []int64{1, 3}, []int64{2, 5}, []int64{2, 3}},
 		{"in intersect", queryPB.FilterOperator_FILTER_OPERATOR_IN, []int64{1, 2, 3}, []int64{2, 3, 4}, []int64{2, 3}},

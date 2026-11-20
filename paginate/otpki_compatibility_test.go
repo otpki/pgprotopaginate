@@ -45,7 +45,7 @@ func TestUnknownLogicalOperatorUsesAND(t *testing.T) {
 	require.Equal(t, int64(2), page.TotalCount)
 }
 
-func TestUnaryFilterIgnoresExtraValues(t *testing.T) {
+func TestUnaryFilterCardinality(t *testing.T) {
 	t.Parallel()
 	pool := setupAnnotatedDB(t)
 	for _, tc := range []struct {
@@ -63,6 +63,12 @@ func TestUnaryFilterIgnoresExtraValues(t *testing.T) {
 				filter := &queryPB.Filter{Column: "name", Operator: tc.operator, Values: []*queryPB.FilterValue{
 					{StringValue: "ignored"}, nil, {TimestampValue: &timestamppb.Timestamp{Nanos: -1}},
 				}}
+				if grouped {
+					require.Error(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{filter}}}, params, annotatedDescriptor()))
+				} else {
+					require.Error(t, convertFilters([]*queryPB.Filter{filter}, params, annotatedDescriptor(), false))
+				}
+				filter.Values = nil
 				if grouped {
 					require.NoError(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{filter}}}, params, annotatedDescriptor()))
 				} else {

@@ -41,11 +41,12 @@ func TestBooleanFilterValues(t *testing.T) {
 			require.Equal(t, []any{value.BoolValue}, params.Eq["without_count"])
 		})
 	}
-	// Empty values must still be rejected for fields whose type is not boolean.
-	_, err := ConvertProtoRequest[*queryPB.PaginationRequest](&queryPB.PaginationRequest{
+	// Scalar defaults are inferred from the declared target field.
+	params, err := ConvertProtoRequest[*queryPB.PaginationRequest](&queryPB.PaginationRequest{
 		Filters: []*queryPB.Filter{{Column: "page_size", Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []*queryPB.FilterValue{{}}}},
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.Equal(t, []any{int64(0)}, params.Eq["page_size"])
 }
 
 func TestGroupedFalseFilterModelTypes(t *testing.T) {

@@ -3,6 +3,7 @@ package paginate
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
@@ -472,6 +473,8 @@ func (b *Builder) FromPaginationParams(params *PaginationParams) *Builder {
 	for field, values := range params.ArrayOverlap {
 		b.ArrayOverlap(field, values...)
 	}
+
+	b.params.filterFields = maps.Clone(params.filterFields)
 
 	// filter groups
 	for _, group := range params.FilterGroups {

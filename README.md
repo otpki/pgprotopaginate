@@ -17,7 +17,10 @@ as a Go dependency. No local code generation is required.
 
 ## Filtering
 
-- Separate filters use AND. Multiple values in one equality filter match any value.
+- Separate filters use AND, including repeated queries on the same column.
+- EQUALS and NOT_EQUALS require exactly one value. IN and NOT_IN take nonempty lists of "alternatives".
+- Ordered comparisons require one value, BETWEEN requires two. Null and empty queries take no values.
+- Scalar false, zero, and empty strings use the declared protobuf field type.
 - Groups support AND and OR, with the same validation and value types as ordinary filters.
 - Invalid filters return errors.
 - Mark singular messages `nested = true` to expose paths such as `details.score`.
