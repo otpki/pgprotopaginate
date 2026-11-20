@@ -73,20 +73,28 @@ func convertFiltersToProtobuf(params *PaginationParams, fd protoreflect.MessageD
 	var filters []*queryPB.Filter
 
 	for column, values := range params.Eq {
+		operator := queryPB.FilterOperator_FILTER_OPERATOR_EQUALS
+		if len(values) > 1 {
+			operator = queryPB.FilterOperator_FILTER_OPERATOR_IN
+		}
 		field := getFieldDescriptor(fd, column)
 		filter := &queryPB.Filter{
 			Column:   column,
-			Operator: queryPB.FilterOperator_FILTER_OPERATOR_EQUALS,
+			Operator: operator,
 			Values:   convertValuesToProtobufWithType(values, field),
 		}
 		filters = append(filters, filter)
 	}
 
 	for column, values := range params.NotEq {
+		operator := queryPB.FilterOperator_FILTER_OPERATOR_NOT_EQUALS
+		if len(values) > 1 {
+			operator = queryPB.FilterOperator_FILTER_OPERATOR_NOT_IN
+		}
 		field := getFieldDescriptor(fd, column)
 		filter := &queryPB.Filter{
 			Column:   column,
-			Operator: queryPB.FilterOperator_FILTER_OPERATOR_NOT_EQUALS,
+			Operator: operator,
 			Values:   convertValuesToProtobufWithType(values, field),
 		}
 		filters = append(filters, filter)

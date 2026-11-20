@@ -447,12 +447,18 @@ func convertFilters(
 		if filter == nil || filter.Column == "" {
 			return fmt.Errorf("filter and column are required")
 		}
+		for i, value := range filter.Values {
+			if value == nil {
+				return fmt.Errorf("nil filter value at index %d", i)
+			}
+		}
+		field := params.filterFields[filter.Column]
 		if fd != nil {
 			info, err := queryField(fd, filter.Column)
 			if err != nil {
 				return err
 			}
-			field := info.Descriptor
+			field = info.Descriptor
 			booleanColumn = field.Kind() == protoreflect.BoolKind
 			if !isFieldFilterable(field) {
 				return fmt.Errorf("field '%s' is not filterable", filter.Column)
@@ -462,27 +468,32 @@ func convertFilters(
 			}
 			filter = mapFilter(filter, info)
 		}
-		filterValues := filter.Values
-		if filterIgnoresValues(filter.Operator) {
-			filterValues = nil
+		if err := validateFilterArity(filter.Operator, len(filter.Values)); err != nil {
+			return err
 		}
-		values, err := convertFilterValues(filterValues, booleanColumn)
+		if field != nil {
+			if params.filterFields == nil {
+				params.filterFields = make(map[string]protoreflect.FieldDescriptor)
+			}
+			params.filterFields[filter.Column] = field
+		}
+		values, err := convertFilterValues(filter.Values, booleanColumn, field)
 		if err != nil {
 			return fmt.Errorf("converting filter values for field '%s': %w", filter.Column, err)
 		}
-		if err := validateFilterArity(filter.Operator, len(values)); err != nil {
-			return err
-		}
 		key := filterKey{filter.Column, filter.Operator}
+		target := params
+		if seen[key] {
+			target = NewPaginationParams()
+		}
+		if err := addFilterToParams(filter, values, target); err != nil {
+			return fmt.Errorf("adding filter for field '%s': %w", filter.Column, err)
+		}
 		if seen[key] {
 			params.FilterGroups = append(params.FilterGroups, &FilterGroup{
 				Operator: queryPB.LogicalOperator_LOGICAL_OPERATOR_AND,
 				Filters:  []*queryPB.Filter{filter},
 			})
-			continue
-		}
-		if err := addFilterToParams(filter, values, params); err != nil {
-			return fmt.Errorf("adding filter for field '%s': %w", filter.Column, err)
 		}
 		seen[key] = true
 	}
@@ -490,7 +501,7 @@ func convertFilters(
 	return nil
 }
 
-func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool) ([]any, error) {
+func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool, field protoreflect.FieldDescriptor) ([]any, error) {
 	result := make([]any, len(values))
 
 	for i, value := range values {
@@ -519,11 +530,30 @@ func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool) ([]a
 		case value.BytesValue != nil:
 			result[i] = value.BytesValue
 		case booleanColumn:
-			// Proto3 scalar fields have no presence: false is encoded as an
-			// empty FilterValue. Only a boolean target can disambiguate it.
+			// Raw builder groups infer false from the database model's type.
 			result[i] = false
 		default:
-			return nil, fmt.Errorf("empty filter value at index %d", i)
+			// FilterValue has no scalar presence; use the filtered field's type.
+			if field != nil {
+				switch field.Kind() {
+				case protoreflect.BoolKind:
+					result[i] = false
+				case protoreflect.StringKind:
+					result[i] = ""
+				case protoreflect.Int32Kind, protoreflect.Int64Kind, protoreflect.Sint32Kind, protoreflect.Sint64Kind, protoreflect.Sfixed32Kind, protoreflect.Sfixed64Kind, protoreflect.EnumKind:
+					result[i] = int64(0)
+				case protoreflect.Uint32Kind, protoreflect.Uint64Kind, protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
+					result[i] = uint64(0)
+				case protoreflect.FloatKind, protoreflect.DoubleKind:
+					result[i] = float64(0)
+				case protoreflect.BytesKind:
+					result[i] = []byte{}
+				default:
+					return nil, fmt.Errorf("empty filter value at index %d", i)
+				}
+			} else {
+				return nil, fmt.Errorf("empty filter value at index %d", i)
+			}
 		}
 	}
 
@@ -665,9 +695,14 @@ func convertFilterGroups(
 		if group == nil {
 			continue
 		}
-		if err := convertFilters(group.Filters, NewPaginationParams(), fd, false); err != nil {
+		groupParams := NewPaginationParams()
+		if err := convertFilters(group.Filters, groupParams, fd, false); err != nil {
 			return err
 		}
+		if params.filterFields == nil {
+			params.filterFields = make(map[string]protoreflect.FieldDescriptor)
+		}
+		maps.Copy(params.filterFields, groupParams.filterFields)
 		mapped := make([]*queryPB.Filter, len(group.Filters))
 		for i, filter := range group.Filters {
 			if fd == nil {
@@ -688,30 +723,20 @@ func convertFilterGroups(
 	return nil
 }
 
-// filterIgnoresValues matches PostgreSQL's unary null and empty predicates.
-func filterIgnoresValues(operator queryPB.FilterOperator) bool {
-	switch operator {
-	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL,
-		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_NULL,
-		queryPB.FilterOperator_FILTER_OPERATOR_IS_EMPTY,
-		queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_EMPTY:
-		return true
-	default:
-		return false
-	}
-}
-
 // validateFilterArity prevents malformed predicates from being silently dropped.
 func validateFilterArity(operator queryPB.FilterOperator, count int) error {
-	if filterIgnoresValues(operator) {
-		return nil
-	}
 	switch operator {
+	case queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL, queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_NULL,
+		queryPB.FilterOperator_FILTER_OPERATOR_IS_EMPTY, queryPB.FilterOperator_FILTER_OPERATOR_IS_NOT_EMPTY:
+		if count == 0 {
+			return nil
+		}
 	case queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN:
 		if count == 2 {
 			return nil
 		}
-	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN,
+	case queryPB.FilterOperator_FILTER_OPERATOR_EQUALS, queryPB.FilterOperator_FILTER_OPERATOR_NOT_EQUALS,
+		queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN,
 		queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN_OR_EQUAL,
 		queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN,
 		queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN_OR_EQUAL:

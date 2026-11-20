@@ -2,6 +2,7 @@ package paginate
 
 import (
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type FilterGroup struct {
@@ -60,6 +61,7 @@ type PaginationParams struct {
 
 	// Filter Groups (for OR logic)
 	FilterGroups []*FilterGroup `json:"filter_groups"`
+	filterFields map[string]protoreflect.FieldDescriptor
 
 	// Extra Settings
 	table                   string

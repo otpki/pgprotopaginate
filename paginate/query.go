@@ -3,6 +3,7 @@ package paginate
 import (
 	"database/sql"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -403,6 +404,7 @@ func (qb *QueryBuilder) buildSingleFilter(filter *queryPB.Filter) (string, error
 		return "", nil
 	}
 	params := NewPaginationParams()
+	params.filterFields = maps.Clone(qb.params.filterFields)
 	if err := convertFilters([]*queryPB.Filter{filter}, params, nil, qb.isBooleanColumn(filter.Column)); err != nil {
 		return "", err
 	}
