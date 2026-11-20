@@ -123,7 +123,7 @@ func TestAnnotatedFilterAndSortConversion(t *testing.T) {
 	fd := annotatedDescriptor()
 	filter := &queryPB.Filter{Column: "details.score", Operator: queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN, Values: []*queryPB.FilterValue{{IntValue: 10}}}
 	params := NewPaginationParams()
-	require.NoError(t, convertFilters([]*queryPB.Filter{filter, filter}, params, fd))
+	require.NoError(t, convertFilters([]*queryPB.Filter{filter, filter}, params, fd, false))
 	require.Equal(t, int64(10), params.Gt["mapped_rows.score"])
 	require.Equal(t, "mapped_rows.score", params.FilterGroups[0].Filters[0].Column)
 	group := &queryPB.FilterGroup{Operator: queryPB.LogicalOperator_LOGICAL_OPERATOR_OR, Filters: []*queryPB.Filter{filter}}
@@ -137,16 +137,16 @@ func TestAnnotatedFilterAndSortConversion(t *testing.T) {
 	for _, column := range []string{"hidden", "repeated_details.score", "details.missing", "mapped_rows.score"} {
 		invalid := proto.CloneOf(filter)
 		invalid.Column = column
-		require.Error(t, convertFilters([]*queryPB.Filter{invalid}, NewPaginationParams(), fd))
+		require.Error(t, convertFilters([]*queryPB.Filter{invalid}, NewPaginationParams(), fd, false))
 		require.Error(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{invalid}}}, NewPaginationParams(), fd))
 		require.Error(t, convertSortEntries([]*queryPB.SortEntry{{Column: column}}, NewPaginationParams(), fd))
 	}
 	invalid := proto.CloneOf(filter)
 	invalid.Operator = queryPB.FilterOperator_FILTER_OPERATOR_LIKE
-	require.Error(t, convertFilters([]*queryPB.Filter{invalid}, NewPaginationParams(), fd))
+	require.Error(t, convertFilters([]*queryPB.Filter{invalid}, NewPaginationParams(), fd, false))
 	require.Error(t, convertSortEntries([]*queryPB.SortEntry{{Column: "details.score", JsonText: "x"}}, NewPaginationParams(), fd))
 	require.Error(t, convertSortEntries([]*queryPB.SortEntry{nil}, NewPaginationParams(), fd))
-	require.NoError(t, convertFilters([]*queryPB.Filter{{Column: "payload", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL}}, NewPaginationParams(), fd))
+	require.NoError(t, convertFilters([]*queryPB.Filter{{Column: "payload", Operator: queryPB.FilterOperator_FILTER_OPERATOR_IS_NULL}}, NewPaginationParams(), fd, false))
 }
 
 func TestAnnotatedMetadataAndQueryBinding(t *testing.T) {

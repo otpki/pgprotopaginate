@@ -1,6 +1,7 @@
 package paginate
 
 import (
+	"database/sql"
 	"fmt"
 	"reflect"
 	"slices"
@@ -8,6 +9,7 @@ import (
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/samber/oops"
 )
 
@@ -402,7 +404,7 @@ func (qb *QueryBuilder) buildSingleFilter(filter *queryPB.Filter) (string, error
 		return "", nil
 	}
 	params := NewPaginationParams()
-	if err := convertFilters([]*queryPB.Filter{filter}, params, nil); err != nil {
+	if err := convertFilters([]*queryPB.Filter{filter}, params, nil, qb.isBooleanColumn(filter.Column)); err != nil {
 		return "", err
 	}
 	var clause strings.Builder
@@ -411,6 +413,35 @@ func (qb *QueryBuilder) buildSingleFilter(filter *queryPB.Filter) (string, error
 	qb.buildJSONFilters(writer, params)
 	qb.buildArrayFilters(writer, params)
 	return "(" + clause.String() + ")", nil
+}
+
+// Grouped filters are converted after protobuf field names have been mapped to
+// SQL columns, so use the database model's type to recognize false values.
+func (qb *QueryBuilder) isBooleanColumn(column string) bool {
+	var columnType reflect.Type
+	if value, ok := qb.params.additionalColumnTypes[projectedColumn(qb.params, column)]; ok {
+		columnType = reflect.TypeOf(value)
+	} else {
+		model, err := indirectModelValue(qb.params.model)
+		if err != nil || model.Kind() != reflect.Struct {
+			return false
+		}
+		if column == qb.qualifyColumn(unqualifyColumn(column)) || column == qb.params.table+"."+unqualifyColumn(column) {
+			column = unqualifyColumn(column)
+		}
+		index, ok := GetFieldIndex(model.Type(), column)
+		if !ok {
+			return false
+		}
+		columnType = model.Type().Field(index).Type
+	}
+	if columnType == nil {
+		return false
+	}
+	for columnType.Kind() == reflect.Pointer || columnType.Kind() == reflect.Slice || columnType.Kind() == reflect.Array {
+		columnType = columnType.Elem()
+	}
+	return columnType.Kind() == reflect.Bool || columnType == reflect.TypeFor[pgtype.Bool]() || columnType == reflect.TypeFor[sql.NullBool]()
 }
 
 // buildAllFilters builds all filter clauses for a given params (reused for filter groups)

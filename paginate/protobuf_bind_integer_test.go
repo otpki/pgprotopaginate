@@ -48,7 +48,7 @@ func TestUnsignedFilterValueBoundaries(t *testing.T) {
 						if value > math.MaxInt64 {
 							require.Equal(t, strconv.FormatUint(value, 10), got.StringValue)
 							require.Zero(t, got.IntValue)
-							decoded, err := convertFilterValues([]*queryPB.FilterValue{got})
+							decoded, err := convertFilterValues([]*queryPB.FilterValue{got}, false)
 							require.NoError(t, err)
 							require.Equal(t, []any{strconv.FormatUint(value, 10)}, decoded)
 						} else {

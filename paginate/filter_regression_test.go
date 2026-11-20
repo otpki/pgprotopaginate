@@ -54,7 +54,7 @@ func TestGroupedFilterValidation(t *testing.T) {
 		{"nil filter", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Error(t, convertFilters([]*queryPB.Filter{tc.filter}, NewPaginationParams(), fd))
+			require.Error(t, convertFilters([]*queryPB.Filter{tc.filter}, NewPaginationParams(), fd, false))
 			require.Error(t, convertFilterGroups([]*queryPB.FilterGroup{{Filters: []*queryPB.Filter{tc.filter}}}, NewPaginationParams(), fd))
 		})
 	}
@@ -79,7 +79,7 @@ func TestRepeatedFilterPredicates(t *testing.T) {
 				filters[1].Values = append(filters[1].Values, &queryPB.FilterValue{IntValue: 7})
 			}
 			params := NewPaginationParams()
-			require.NoError(t, convertFilters(filters, params, fd))
+			require.NoError(t, convertFilters(filters, params, fd, false))
 			builder := NewBuilder().Table("rows").Model(&struct {
 				ID int64 `db:"id"`
 			}{}).FromPaginationParams(params)
@@ -253,7 +253,7 @@ func TestRepeatedFilterResults(t *testing.T) {
 				filters = append(filters, filter)
 			}
 			params := NewPaginationParams()
-			require.NoError(t, convertFilters(filters, params, filterDescriptor(t)))
+			require.NoError(t, convertFilters(filters, params, filterDescriptor(t), false))
 			type row struct {
 				ID int64 `db:"id"`
 			}
