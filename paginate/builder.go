@@ -1,18 +1,17 @@
 package paginate
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
-	"github.com/samber/oops"
 )
 
 const (
 	DefaultLimit = 10
 	MaxLimit     = 1000
 	DefaultOrder = queryPB.SortOrder_SORT_ORDER_ASC
-	ServiceName  = "pgprotopaginate"
 )
 
 type Builder struct {
@@ -33,10 +32,10 @@ func (b *Builder) Build() (*PaginationParams, error) {
 		return nil, err
 	}
 	if b.params.table == "" {
-		return nil, oops.In(ServiceName).New("table is required")
+		return nil, fmt.Errorf("table is required")
 	}
 	if b.params.model == nil {
-		return nil, oops.In(ServiceName).New("model is required")
+		return nil, fmt.Errorf("model is required")
 	}
 	return b.params, nil
 }
@@ -63,7 +62,7 @@ func (b *Builder) BuildCountSQL() (string, []any, error) {
 
 func (b *Builder) Table(table string) *Builder {
 	if table == "" {
-		return b.addError(oops.In(ServiceName).New("table cannot be empty"))
+		return b.addError(fmt.Errorf("table cannot be empty"))
 	}
 	b.params.table = table
 	return b
@@ -86,7 +85,7 @@ func (b *Builder) AdditionalColumnTypes(types map[string]any) *Builder {
 
 func (b *Builder) PageToken(token string) *Builder {
 	if len(token) == 0 {
-		return b.addError(oops.In(ServiceName).New("page token cannot be empty"))
+		return b.addError(fmt.Errorf("page token cannot be empty"))
 	}
 	b.params.PageToken = token
 	return b
@@ -121,7 +120,7 @@ func (b *Builder) AdditionalSelect(columns ...string) *Builder {
 
 func (b *Builder) Where(clause string, args ...any) *Builder {
 	if clause == "" {
-		return b.addError(oops.In(ServiceName).New("where clause cannot be empty"))
+		return b.addError(fmt.Errorf("where clause cannot be empty"))
 	}
 	b.params.whereClauses = append(b.params.whereClauses, clause)
 	b.params.whereArgs = append(b.params.whereArgs, args...)
@@ -130,7 +129,7 @@ func (b *Builder) Where(clause string, args ...any) *Builder {
 
 func (b *Builder) Join(clause string) *Builder {
 	if clause == "" {
-		return b.addError(oops.In(ServiceName).New("join clause cannot be empty"))
+		return b.addError(fmt.Errorf("join clause cannot be empty"))
 	}
 	b.params.joins = append(b.params.joins, clause)
 	return b
@@ -138,7 +137,7 @@ func (b *Builder) Join(clause string) *Builder {
 
 func (b *Builder) GroupBy(clause string) *Builder {
 	if clause == "" {
-		return b.addError(oops.In(ServiceName).New("group by clause cannot be empty"))
+		return b.addError(fmt.Errorf("group by clause cannot be empty"))
 	}
 	b.params.groupBy = clause
 	return b
@@ -169,7 +168,7 @@ func (b *Builder) Sort(columns ...string) *Builder {
 
 func (b *Builder) SortBy(column string, direction ...queryPB.SortOrder) *Builder {
 	if column == "" {
-		return b.addError(oops.In(ServiceName).New("sort column cannot be empty"))
+		return b.addError(fmt.Errorf("sort column cannot be empty"))
 	}
 	dir := DefaultOrder
 	if len(direction) > 0 {
@@ -185,10 +184,10 @@ func (b *Builder) SortByDesc(column string) *Builder {
 
 func (b *Builder) SortByEntry(entry *SortEntry, direction ...queryPB.SortOrder) *Builder {
 	if entry == nil {
-		return b.addError(oops.In(ServiceName).New("sort entry cannot be nil"))
+		return b.addError(fmt.Errorf("sort entry cannot be nil"))
 	}
 	if entry.Column == "" {
-		return b.addError(oops.In(ServiceName).New("sort column cannot be empty"))
+		return b.addError(fmt.Errorf("sort column cannot be empty"))
 	}
 	if entry.Order == queryPB.SortOrder_SORT_ORDER_UNSPECIFIED {
 		entry.Order = DefaultOrder
@@ -372,7 +371,7 @@ func (b *Builder) addError(err error) *Builder {
 
 func (b *Builder) getError() error {
 	if len(b.errs) > 0 {
-		return oops.Join(b.errs...)
+		return errors.Join(b.errs...)
 	}
 	return nil
 }

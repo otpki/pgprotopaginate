@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/samber/oops"
 )
 
 // AIP-158 suggests 3 days
@@ -48,12 +46,12 @@ func decodeToken(tokenStr string) (*pageToken, error) {
 
 	data, err := base64.StdEncoding.DecodeString(tokenStr)
 	if err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "decoding token encoding")
+		return nil, fmt.Errorf("%w: decoding token encoding: %w", ErrInvalidRequest, err)
 	}
 
 	var token pageToken
 	if err := json.Unmarshal(data, &token); err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "unmarshalling token encoding")
+		return nil, fmt.Errorf("%w: unmarshalling token encoding: %w", ErrInvalidRequest, err)
 	}
 
 	return &token, nil
@@ -82,12 +80,12 @@ func canonicalFingerprintParams(params *PaginationParams) *PaginationParams {
 
 func validateToken(token string, params *PaginationParams) error {
 	if token == "" {
-		return oops.In(ServiceName).New("page token is required for token pagination")
+		return fmt.Errorf("%w: page token is required for token pagination", ErrInvalidRequest)
 	}
 
 	decodedToken, err := decodeToken(token)
 	if err != nil {
-		return oops.In(ServiceName).Wrapf(err, "validating page token")
+		return fmt.Errorf("validating page token: %w", err)
 	}
 
 	if err := validateTokenDecoded(decodedToken, params); err != nil {
@@ -100,20 +98,20 @@ func validateToken(token string, params *PaginationParams) error {
 func validateTokenDecoded(token *pageToken, params *PaginationParams) error {
 	// validate timestamp
 	if time.Now().Unix()-token.Timestamp > tokenExpirationDuration {
-		return oops.In(ServiceName).New("token expired")
+		return fmt.Errorf("%w: token expired", ErrInvalidRequest)
 	}
 
 	// validate version
 	if token.Version != version {
-		return oops.In(ServiceName).New("invalid token version")
+		return fmt.Errorf("%w: invalid token version", ErrInvalidRequest)
 	}
 
 	currentFingerprint, err := generateRequestFingerprint(params)
 	if err != nil {
-		return oops.In(ServiceName).Wrapf(err, "generating request fingerprint")
+		return fmt.Errorf("generating request fingerprint: %w", err)
 	}
 	if token.RequestFingerprint != currentFingerprint {
-		return oops.In(ServiceName).New("invalid token fingerprint")
+		return fmt.Errorf("%w: invalid token fingerprint", ErrInvalidRequest)
 	}
 
 	return nil

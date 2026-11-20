@@ -1,6 +1,7 @@
 package paginate
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -8,7 +9,6 @@ import (
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/samber/oops"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -45,7 +45,7 @@ type FieldInfo struct {
 // GetTypeInfo returns cached type information or builds it if not exists
 func GetTypeInfo(model any) (*TypeInfo, error) {
 	if model == nil {
-		return nil, oops.In(ServiceName).New("model cannot be nil")
+		return nil, fmt.Errorf("model cannot be nil")
 	}
 
 	value, err := indirectModelValue(model)
@@ -54,7 +54,7 @@ func GetTypeInfo(model any) (*TypeInfo, error) {
 	}
 
 	if value.Kind() != reflect.Struct {
-		return nil, oops.In(ServiceName).New("model must be a struct or pointer to struct")
+		return nil, fmt.Errorf("model must be a struct or pointer to struct")
 	}
 
 	t := value.Type()
@@ -63,7 +63,7 @@ func GetTypeInfo(model any) (*TypeInfo, error) {
 	if cached, ok := globalTypeCache.Load(t); ok {
 		info, valid := cached.(*TypeInfo)
 		if !valid || info == nil {
-			return nil, oops.In(ServiceName).New("invalid cached type information")
+			return nil, fmt.Errorf("invalid cached type information")
 		}
 		return info, nil
 	}
@@ -130,13 +130,13 @@ func buildTypeInfo(t reflect.Type) *TypeInfo {
 
 func indirectModelValue(model any) (reflect.Value, error) {
 	if model == nil {
-		return reflect.Value{}, oops.In(ServiceName).New("model cannot be nil")
+		return reflect.Value{}, fmt.Errorf("model cannot be nil")
 	}
 
 	value := reflect.ValueOf(model)
 	for value.Kind() == reflect.Pointer {
 		if value.IsNil() {
-			return reflect.Value{}, oops.In(ServiceName).New("model cannot be nil")
+			return reflect.Value{}, fmt.Errorf("model cannot be nil")
 		}
 		value = value.Elem()
 	}
@@ -324,7 +324,7 @@ func ExtractModelValues(model any, columns []string) (map[string]any, error) {
 	for _, column := range columns {
 		fieldIndex, found := typeInfo.FieldMappings[unqualifyColumn(column)]
 		if !found {
-			return nil, oops.In(ServiceName).Errorf("field %s not found in model", column)
+			return nil, fmt.Errorf("field %s not found in model", column)
 		}
 
 		fieldValue := value.Field(fieldIndex)
@@ -368,7 +368,7 @@ func CreateProtoInstance[T proto.Message]() (T, error) {
 		instance := reflect.New(protoType.Elem()).Interface()
 		message, ok := instance.(T)
 		if !ok {
-			return zero, oops.In(ServiceName).New("unexpected protobuf instance type")
+			return zero, fmt.Errorf("unexpected protobuf instance type")
 		}
 		return message, nil
 	}

@@ -1,11 +1,11 @@
 package paginate
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
-	"github.com/samber/oops"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -26,7 +26,7 @@ func isNestedQueryField(field protoreflect.FieldDescriptor) bool {
 func queryField(fd protoreflect.MessageDescriptor, path string) (FieldInfo, error) {
 	field, ok := getFieldInfo(fd)[path]
 	if !ok {
-		return FieldInfo{}, oops.In(ServiceName).Errorf("field '%s' not found in message", path)
+		return FieldInfo{}, fmt.Errorf("field '%s' not found in message", path)
 	}
 	return field, nil
 }

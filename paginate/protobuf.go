@@ -2,13 +2,13 @@ package paginate
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
 	"github.com/jackc/pgx/v5"
-	"github.com/samber/oops"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -30,7 +30,7 @@ func ProtoPaginate[T proto.Message, M any](ctx context.Context, pgxConn DBConn, 
 		for i, model := range models {
 			protoModel, err := convertFn(&model)
 			if err != nil {
-				return nil, nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
+				return nil, nil, fmt.Errorf("converting model to proto: %w", err)
 			}
 			protoModels[i] = protoModel
 		}
@@ -43,7 +43,7 @@ func ProtoPaginate[T proto.Message, M any](ctx context.Context, pgxConn DBConn, 
 func GetPaginationInfo[T proto.Message]() (*queryPB.PaginationResponse, error) {
 	protoType, err := CreateProtoInstance[T]()
 	if err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "creating proto instance")
+		return nil, fmt.Errorf("creating proto instance: %w", err)
 	}
 	return buildPaginationInfoResponse(protoType)
 }
@@ -104,7 +104,7 @@ func ProtoPaginateExtended[T proto.Message, M any](
 			}
 			protoModel, err := convertFn(&model, additionalData)
 			if err != nil {
-				return nil, nil, oops.In(ServiceName).Wrapf(err, "converting model to proto")
+				return nil, nil, fmt.Errorf("converting model to proto: %w", err)
 			}
 			protoModels[i] = protoModel
 		}
@@ -132,7 +132,7 @@ func protoPaginateWithRowConverter[T proto.Message, M any](
 	var modelType M
 	modelInstance, err := CreateModelInstance(modelType)
 	if err != nil {
-		return nil, nil, oops.In(ServiceName).Wrapf(err, "creating model instance")
+		return nil, nil, fmt.Errorf("creating model instance: %w", err)
 	}
 	columns, err := GetColumnNames(modelInstance)
 	if err != nil {
@@ -297,6 +297,9 @@ func beginTx(ctx context.Context, pgxConn DBConn) (pgx.Tx, bool, error) {
 func ConvertProtoRequest[T proto.Message](
 	req *queryPB.PaginationRequest,
 ) (*PaginationParams, error) {
+	if req.GetPageSize() < 0 || req.GetPageSize() > MaxLimit || req.GetSkip() < 0 {
+		return nil, fmt.Errorf("%w: page_size must be between 0 and %d and skip must be nonnegative", ErrInvalidRequest, MaxLimit)
+	}
 	params := &PaginationParams{
 		PageSize: DefaultLimit,
 		// Initialize all maps to prevent nil pointer issues
@@ -339,7 +342,7 @@ func ConvertProtoRequest[T proto.Message](
 	}
 
 	if req != nil {
-		if req.PageSize > 0 && req.PageSize <= MaxLimit {
+		if req.PageSize > 0 {
 			params.PageSize = req.PageSize
 		}
 		params.Skip = req.Skip
@@ -355,17 +358,17 @@ func ConvertProtoRequest[T proto.Message](
 
 		// convert sort entries with validation
 		if err := convertSortEntries(req.Sort, params, fd); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 
 		// convert filters with validation
 		if err := convertFilters(req.Filters, params, fd, false); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 
 		// Convert filter groups to the internal format.
 		if err := convertFilterGroups(req.FilterGroups, params, fd); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 	}
 
@@ -379,7 +382,7 @@ func convertSortEntries(
 ) error {
 	for _, entry := range sortEntries {
 		if entry == nil {
-			return oops.In(ServiceName).New("sort entry is required")
+			return fmt.Errorf("sort entry is required")
 		}
 		info, err := queryField(fd, entry.Column)
 		if err != nil {
@@ -388,11 +391,11 @@ func convertSortEntries(
 		field := info.Descriptor
 
 		if !isFieldSortable(field) {
-			return oops.In(ServiceName).Errorf("field '%s' is not sortable", entry.Column)
+			return fmt.Errorf("field '%s' is not sortable", entry.Column)
 		}
 
 		if !isSortOperatorAllowed(field, sortEntryToOperator(entry)) {
-			return oops.In(ServiceName).Errorf("operator %v not allowed for field '%s'", entry.Order, entry.Column)
+			return fmt.Errorf("operator %v not allowed for field '%s'", entry.Order, entry.Column)
 		}
 
 		// create SortEntry
@@ -442,7 +445,7 @@ func convertFilters(
 	seen := make(map[filterKey]bool)
 	for _, filter := range filters {
 		if filter == nil || filter.Column == "" {
-			return oops.In(ServiceName).New("filter and column are required")
+			return fmt.Errorf("filter and column are required")
 		}
 		if fd != nil {
 			info, err := queryField(fd, filter.Column)
@@ -452,10 +455,10 @@ func convertFilters(
 			field := info.Descriptor
 			booleanColumn = field.Kind() == protoreflect.BoolKind
 			if !isFieldFilterable(field) {
-				return oops.In(ServiceName).Errorf("field '%s' is not filterable", filter.Column)
+				return fmt.Errorf("field '%s' is not filterable", filter.Column)
 			}
 			if !isFilterOperatorAllowed(field, filter.Operator) {
-				return oops.In(ServiceName).Errorf("operator %v not allowed for field '%s'", filter.Operator, filter.Column)
+				return fmt.Errorf("operator %v not allowed for field '%s'", filter.Operator, filter.Column)
 			}
 			filter = mapFilter(filter, info)
 		}
@@ -465,7 +468,7 @@ func convertFilters(
 		}
 		values, err := convertFilterValues(filterValues, booleanColumn)
 		if err != nil {
-			return oops.In(ServiceName).Wrapf(err, "converting filter values for field '%s'", filter.Column)
+			return fmt.Errorf("converting filter values for field '%s': %w", filter.Column, err)
 		}
 		if err := validateFilterArity(filter.Operator, len(values)); err != nil {
 			return err
@@ -479,7 +482,7 @@ func convertFilters(
 			continue
 		}
 		if err := addFilterToParams(filter, values, params); err != nil {
-			return oops.In(ServiceName).Wrapf(err, "adding filter for field '%s'", filter.Column)
+			return fmt.Errorf("adding filter for field '%s': %w", filter.Column, err)
 		}
 		seen[key] = true
 	}
@@ -492,7 +495,7 @@ func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool) ([]a
 
 	for i, value := range values {
 		if value == nil {
-			return nil, oops.In(ServiceName).Errorf("nil filter value at index %d", i)
+			return nil, fmt.Errorf("nil filter value at index %d", i)
 		}
 		switch {
 		case value.StringValue != "":
@@ -520,7 +523,7 @@ func convertFilterValues(values []*queryPB.FilterValue, booleanColumn bool) ([]a
 			// empty FilterValue. Only a boolean target can disambiguate it.
 			result[i] = false
 		default:
-			return nil, oops.In(ServiceName).Errorf("empty filter value at index %d", i)
+			return nil, fmt.Errorf("empty filter value at index %d", i)
 		}
 	}
 
@@ -535,27 +538,27 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 		params.NotEq[filter.Column] = append(params.NotEq[filter.Column], values...)
 	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN:
 		if len(values) != 1 {
-			return oops.In(ServiceName).New("GREATER_THAN requires exactly 1 value")
+			return fmt.Errorf("GREATER_THAN requires exactly 1 value")
 		}
 		params.Gt[filter.Column] = values[0]
 	case queryPB.FilterOperator_FILTER_OPERATOR_GREATER_THAN_OR_EQUAL:
 		if len(values) != 1 {
-			return oops.In(ServiceName).New("GREATER_THAN_OR_EQUAL requires exactly 1 value")
+			return fmt.Errorf("GREATER_THAN_OR_EQUAL requires exactly 1 value")
 		}
 		params.Gte[filter.Column] = values[0]
 	case queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN:
 		if len(values) != 1 {
-			return oops.In(ServiceName).New("LESS_THAN requires exactly 1 value")
+			return fmt.Errorf("LESS_THAN requires exactly 1 value")
 		}
 		params.Lt[filter.Column] = values[0]
 	case queryPB.FilterOperator_FILTER_OPERATOR_LESS_THAN_OR_EQUAL:
 		if len(values) != 1 {
-			return oops.In(ServiceName).New("LESS_THAN_OR_EQUAL requires exactly 1 value")
+			return fmt.Errorf("LESS_THAN_OR_EQUAL requires exactly 1 value")
 		}
 		params.Lte[filter.Column] = values[0]
 	case queryPB.FilterOperator_FILTER_OPERATOR_BETWEEN:
 		if len(values) != 2 {
-			return oops.In(ServiceName).New("BETWEEN requires exactly 2 values")
+			return fmt.Errorf("BETWEEN requires exactly 2 values")
 		}
 		params.Between[filter.Column] = [2]any{values[0], values[1]}
 	case queryPB.FilterOperator_FILTER_OPERATOR_IN:
@@ -568,7 +571,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("LIKE operator requires string values")
+				return fmt.Errorf("LIKE operator requires string values")
 			}
 		}
 		params.Like[filter.Column] = append(params.Like[filter.Column], strValues...)
@@ -578,7 +581,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("ILIKE operator requires string values")
+				return fmt.Errorf("ILIKE operator requires string values")
 			}
 		}
 		params.ILike[filter.Column] = append(params.ILike[filter.Column], strValues...)
@@ -596,7 +599,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("JSON_CONTAINS operator requires string values")
+				return fmt.Errorf("JSON_CONTAINS operator requires string values")
 			}
 		}
 		params.JSONContains[filter.Column] = append(params.JSONContains[filter.Column], strValues...)
@@ -606,7 +609,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("JSON_EXISTS operator requires string values")
+				return fmt.Errorf("JSON_EXISTS operator requires string values")
 			}
 		}
 		params.JSONExists[filter.Column] = append(params.JSONExists[filter.Column], strValues...)
@@ -616,7 +619,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("JSON_ANY_EXISTS operator requires string values")
+				return fmt.Errorf("JSON_ANY_EXISTS operator requires string values")
 			}
 		}
 		params.JSONAnyExists[filter.Column] = append(params.JSONAnyExists[filter.Column], strValues...)
@@ -626,7 +629,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("JSON_ALL_EXISTS operator requires string values")
+				return fmt.Errorf("JSON_ALL_EXISTS operator requires string values")
 			}
 		}
 		params.JSONAllExists[filter.Column] = append(params.JSONAllExists[filter.Column], strValues...)
@@ -636,7 +639,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 			if str, ok := v.(string); ok {
 				strValues[i] = str
 			} else {
-				return oops.In(ServiceName).New("JSON_PATH operator requires string values")
+				return fmt.Errorf("JSON_PATH operator requires string values")
 			}
 		}
 		params.JSONPathQuery[filter.Column] = append(params.JSONPathQuery[filter.Column], strValues...)
@@ -647,7 +650,7 @@ func addFilterToParams(filter *queryPB.Filter, values []any, params *PaginationP
 	case queryPB.FilterOperator_FILTER_OPERATOR_ARRAY_OVERLAP:
 		params.ArrayOverlap[filter.Column] = append(params.ArrayOverlap[filter.Column], values...)
 	default:
-		return oops.In(ServiceName).Errorf("unsupported filter operator: %v", filter.Operator)
+		return fmt.Errorf("unsupported filter operator: %v", filter.Operator)
 	}
 
 	return nil
@@ -720,7 +723,7 @@ func validateFilterArity(operator queryPB.FilterOperator, count int) error {
 			return nil
 		}
 	}
-	return oops.In(ServiceName).Errorf("invalid value count %d for operator %v", count, operator)
+	return fmt.Errorf("invalid value count %d for operator %v", count, operator)
 }
 
 func isFieldSortable(field protoreflect.FieldDescriptor) bool {
