@@ -48,12 +48,12 @@ func decodeToken(tokenStr string) (*pageToken, error) {
 
 	data, err := base64.StdEncoding.DecodeString(tokenStr)
 	if err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "decoding token encoding")
+		return nil, fmt.Errorf("%w: decoding token encoding: %w", ErrInvalidRequest, err)
 	}
 
 	var token pageToken
 	if err := json.Unmarshal(data, &token); err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "unmarshalling token encoding")
+		return nil, fmt.Errorf("%w: unmarshalling token encoding: %w", ErrInvalidRequest, err)
 	}
 
 	return &token, nil
@@ -82,7 +82,7 @@ func canonicalFingerprintParams(params *PaginationParams) *PaginationParams {
 
 func validateToken(token string, params *PaginationParams) error {
 	if token == "" {
-		return oops.In(ServiceName).New("page token is required for token pagination")
+		return fmt.Errorf("%w: page token is required for token pagination", ErrInvalidRequest)
 	}
 
 	decodedToken, err := decodeToken(token)
@@ -100,12 +100,12 @@ func validateToken(token string, params *PaginationParams) error {
 func validateTokenDecoded(token *pageToken, params *PaginationParams) error {
 	// validate timestamp
 	if time.Now().Unix()-token.Timestamp > tokenExpirationDuration {
-		return oops.In(ServiceName).New("token expired")
+		return fmt.Errorf("%w: token expired", ErrInvalidRequest)
 	}
 
 	// validate version
 	if token.Version != version {
-		return oops.In(ServiceName).New("invalid token version")
+		return fmt.Errorf("%w: invalid token version", ErrInvalidRequest)
 	}
 
 	currentFingerprint, err := generateRequestFingerprint(params)
@@ -113,7 +113,7 @@ func validateTokenDecoded(token *pageToken, params *PaginationParams) error {
 		return oops.In(ServiceName).Wrapf(err, "generating request fingerprint")
 	}
 	if token.RequestFingerprint != currentFingerprint {
-		return oops.In(ServiceName).New("invalid token fingerprint")
+		return fmt.Errorf("%w: invalid token fingerprint", ErrInvalidRequest)
 	}
 
 	return nil

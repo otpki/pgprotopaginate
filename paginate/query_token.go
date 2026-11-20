@@ -131,7 +131,7 @@ func defaultTieBreakerColumn(model any) (string, error) {
 func (qb *QueryBuilder) buildTokenPaginationCTE() (string, error) {
 	// decode and validate the token
 	if qb.params.PageToken == "" {
-		return "", oops.In(ServiceName).New("page token is required for token pagination")
+		return "", fmt.Errorf("%w: page token is required for token pagination", ErrInvalidRequest)
 	}
 
 	token, err := decodeToken(qb.params.PageToken)
@@ -147,18 +147,18 @@ func (qb *QueryBuilder) buildTokenPaginationCTE() (string, error) {
 	cursorValues := token.CursorValues
 	sortColumns := token.SortColumns
 	if cursorValues == nil || len(sortColumns) == 0 {
-		return "", oops.In(ServiceName).New("invalid token: missing cursor information")
+		return "", fmt.Errorf("%w: missing cursor information", ErrInvalidRequest)
 	}
 
 	// if explicit cursor columns are configured, ensure they match the token
 	if len(qb.params.CursorColumns) > 0 {
 		// validate that the token's sort columns match our configured cursor columns
 		if len(qb.params.CursorColumns) != len(sortColumns) {
-			return "", oops.In(ServiceName).New("token cursor columns do not match configured cursor columns")
+			return "", fmt.Errorf("%w: token cursor columns do not match configured cursor columns", ErrInvalidRequest)
 		}
 		for i, col := range qb.params.CursorColumns {
 			if i >= len(sortColumns) || sortColumns[i] != col {
-				return "", oops.In(ServiceName).Errorf("token cursor column %d does not match configured cursor column", i)
+				return "", fmt.Errorf("%w: token cursor column %d does not match configured cursor column", ErrInvalidRequest, i)
 			}
 		}
 		// use configured cursor columns for consistency

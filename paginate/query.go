@@ -309,35 +309,35 @@ func (qb *QueryBuilder) buildJSONFilters(andWriter *andWriter, params *Paginatio
 	// check if json object contains a value
 	for column, jsonValues := range params.JSONContains {
 		for _, jsonValue := range jsonValues {
-			andWriter.Write(fmt.Sprintf("%s @> $%d::jsonb", qb.quoteColumn(column), qb.addArg(jsonValue)))
+			andWriter.Write(fmt.Sprintf("%s @> $%d::jsonb", qb.quoteQueryColumn(column), qb.addArg(jsonValue)))
 		}
 	}
 
 	// check if json object contains a key
 	for column, keys := range params.JSONExists {
 		for _, key := range keys {
-			andWriter.Write(fmt.Sprintf("%s ? $%d", qb.quoteColumn(column), qb.addArg(key)))
+			andWriter.Write(fmt.Sprintf("%s ? $%d", qb.quoteQueryColumn(column), qb.addArg(key)))
 		}
 	}
 
 	// check if json object contains any of the keys
 	for column, keys := range params.JSONAnyExists {
 		if len(keys) > 0 {
-			andWriter.Write(fmt.Sprintf("%s ?| $%d", qb.quoteColumn(column), qb.addArg(keys)))
+			andWriter.Write(fmt.Sprintf("%s ?| $%d", qb.quoteQueryColumn(column), qb.addArg(keys)))
 		}
 	}
 
 	// check if json object contains all of the keys
 	for column, keys := range params.JSONAllExists {
 		if len(keys) > 0 {
-			andWriter.Write(fmt.Sprintf("%s ?& $%d", qb.quoteColumn(column), qb.addArg(keys)))
+			andWriter.Write(fmt.Sprintf("%s ?& $%d", qb.quoteQueryColumn(column), qb.addArg(keys)))
 		}
 	}
 
 	// check if json object matches a path query
 	for column, pathQueries := range params.JSONPathQuery {
 		for _, pathQuery := range pathQueries {
-			andWriter.Write(fmt.Sprintf("%s @? $%d", qb.quoteColumn(column), qb.addArg(pathQuery)))
+			andWriter.Write(fmt.Sprintf("%s @? $%d", qb.quoteQueryColumn(column), qb.addArg(pathQuery)))
 		}
 	}
 }
@@ -345,17 +345,17 @@ func (qb *QueryBuilder) buildJSONFilters(andWriter *andWriter, params *Paginatio
 func (qb *QueryBuilder) buildArrayFilters(andWriter *andWriter, params *PaginationParams) {
 	// check if left array contains right array
 	for column, values := range params.ArrayContains {
-		andWriter.Write(fmt.Sprintf("%s @> $%d", qb.quoteColumn(column), qb.addArg(values)))
+		andWriter.Write(fmt.Sprintf("%s @> $%d", qb.quoteQueryColumn(column), qb.addArg(values)))
 	}
 
 	// check if left array is contained by right array
 	for column, values := range params.ArrayContainedBy {
-		andWriter.Write(fmt.Sprintf("%s <@ $%d", qb.quoteColumn(column), qb.addArg(values)))
+		andWriter.Write(fmt.Sprintf("%s <@ $%d", qb.quoteQueryColumn(column), qb.addArg(values)))
 	}
 
 	// check if arrays have any elements in common
 	for column, values := range params.ArrayOverlap {
-		andWriter.Write(fmt.Sprintf("%s && $%d", qb.quoteColumn(column), qb.addArg(values)))
+		andWriter.Write(fmt.Sprintf("%s && $%d", qb.quoteQueryColumn(column), qb.addArg(values)))
 	}
 }
 
@@ -474,9 +474,9 @@ func (qb *QueryBuilder) buildAllFilters(andWriter *andWriter, params *Pagination
 				p = "%" + p + "%"
 			}
 			if qb.isUUIDColumn(column) {
-				andWriter.Write(fmt.Sprintf("%s::text LIKE $%d", qb.quoteColumn(column), qb.addArg(p)))
+				andWriter.Write(fmt.Sprintf("%s::text LIKE $%d", qb.quoteQueryColumn(column), qb.addArg(p)))
 			} else {
-				andWriter.Write(fmt.Sprintf("%s LIKE $%d", qb.quoteColumn(column), qb.addArg(p)))
+				andWriter.Write(fmt.Sprintf("%s LIKE $%d", qb.quoteQueryColumn(column), qb.addArg(p)))
 			}
 		}
 	}
@@ -487,20 +487,20 @@ func (qb *QueryBuilder) buildAllFilters(andWriter *andWriter, params *Pagination
 				p = "%" + p + "%"
 			}
 			if qb.isUUIDColumn(column) {
-				andWriter.Write(fmt.Sprintf("%s::text ILIKE $%d", qb.quoteColumn(column), qb.addArg(p)))
+				andWriter.Write(fmt.Sprintf("%s::text ILIKE $%d", qb.quoteQueryColumn(column), qb.addArg(p)))
 			} else {
-				andWriter.Write(fmt.Sprintf("%s ILIKE $%d", qb.quoteColumn(column), qb.addArg(p)))
+				andWriter.Write(fmt.Sprintf("%s ILIKE $%d", qb.quoteQueryColumn(column), qb.addArg(p)))
 			}
 		}
 	}
 	for _, column := range params.IsNull {
-		andWriter.Write(fmt.Sprintf("%s IS NULL", qb.quoteColumn(column)))
+		andWriter.Write(fmt.Sprintf("%s IS NULL", qb.quoteQueryColumn(column)))
 	}
 	for _, column := range params.IsNotNull {
-		andWriter.Write(fmt.Sprintf("%s IS NOT NULL", qb.quoteColumn(column)))
+		andWriter.Write(fmt.Sprintf("%s IS NOT NULL", qb.quoteQueryColumn(column)))
 	}
 	for _, column := range params.IsEmpty {
-		quotedCol := qb.quoteColumn(column)
+		quotedCol := qb.quoteQueryColumn(column)
 		if qb.isUUIDColumn(column) {
 			andWriter.Write(fmt.Sprintf("%s IS NULL", quotedCol))
 		} else {
@@ -508,7 +508,7 @@ func (qb *QueryBuilder) buildAllFilters(andWriter *andWriter, params *Pagination
 		}
 	}
 	for _, column := range params.IsNotEmpty {
-		quotedCol := qb.quoteColumn(column)
+		quotedCol := qb.quoteQueryColumn(column)
 		if qb.isUUIDColumn(column) {
 			andWriter.Write(fmt.Sprintf("%s IS NOT NULL", quotedCol))
 		} else {
@@ -548,7 +548,7 @@ func (qb *QueryBuilder) buildOrderByClauses() (inner, outer string, err error) {
 	orderedColumns := make([]string, 0, len(qb.params.Sort))
 
 	for _, sort := range qb.params.Sort {
-		column := qb.quoteColumn(sort.Column)
+		column := qb.quoteQueryColumn(sort.Column)
 		outerColumn := qb.quoteColumn(projectedColumn(qb.params, sort.Column))
 		orderedColumns = append(orderedColumns, sort.Column)
 		direction := "ASC"
@@ -645,6 +645,22 @@ func (qb *QueryBuilder) qualifyColumn(column string) string {
 	return fmt.Sprintf("%s.%s", qb.params.table, column)
 }
 
+// quoteQueryColumn qualifies base-model columns when joins could make them
+// ambiguous. Explicit table aliases and additional projected columns are kept.
+func (qb *QueryBuilder) quoteQueryColumn(column string) string {
+	if len(qb.params.joins) == 0 || strings.Contains(column, ".") {
+		return qb.quoteColumn(column)
+	}
+	info, err := GetTypeInfo(qb.params.model)
+	if err != nil {
+		return qb.quoteColumn(column)
+	}
+	if _, ok := info.FieldMappings[column]; !ok {
+		return qb.quoteColumn(column)
+	}
+	return qb.quoteColumn(qb.qualifyColumn(column))
+}
+
 func (qb *QueryBuilder) quoteColumn(column string) string {
 	// handle schema.table format
 	parts := strings.Split(column, ".")
@@ -680,7 +696,7 @@ func uuidComparable(values ...any) bool {
 
 // Check if col can be compared as native type for current val, else text cast
 func (qb *QueryBuilder) compareColumn(column string, values ...any) string {
-	quoted := qb.quoteColumn(column)
+	quoted := qb.quoteQueryColumn(column)
 	if qb.isUUIDColumn(column) && !uuidComparable(values...) {
 		quoted += "::text"
 	}

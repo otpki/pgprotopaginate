@@ -2,6 +2,7 @@ package paginate
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -297,6 +298,9 @@ func beginTx(ctx context.Context, pgxConn DBConn) (pgx.Tx, bool, error) {
 func ConvertProtoRequest[T proto.Message](
 	req *queryPB.PaginationRequest,
 ) (*PaginationParams, error) {
+	if req.GetPageSize() < 0 || req.GetPageSize() > MaxLimit || req.GetSkip() < 0 {
+		return nil, fmt.Errorf("%w: page_size must be between 0 and %d and skip must be nonnegative", ErrInvalidRequest, MaxLimit)
+	}
 	params := &PaginationParams{
 		PageSize: DefaultLimit,
 		// Initialize all maps to prevent nil pointer issues
@@ -339,7 +343,7 @@ func ConvertProtoRequest[T proto.Message](
 	}
 
 	if req != nil {
-		if req.PageSize > 0 && req.PageSize <= MaxLimit {
+		if req.PageSize > 0 {
 			params.PageSize = req.PageSize
 		}
 		params.Skip = req.Skip
@@ -355,17 +359,17 @@ func ConvertProtoRequest[T proto.Message](
 
 		// convert sort entries with validation
 		if err := convertSortEntries(req.Sort, params, fd); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 
 		// convert filters with validation
 		if err := convertFilters(req.Filters, params, fd, false); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 
 		// Convert filter groups to the internal format.
 		if err := convertFilterGroups(req.FilterGroups, params, fd); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 	}
 
