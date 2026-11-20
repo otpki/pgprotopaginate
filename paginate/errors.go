@@ -1,7 +1,7 @@
 package paginate
 
-import "errors"
+import "fmt"
 
 // ErrInvalidRequest identifies invalid pagination input. Use errors.Is to check
 // for it; database, configuration, and result-conversion errors are not marked.
-var ErrInvalidRequest = errors.New("invalid pagination request")
+var ErrInvalidRequest = fmt.Errorf("invalid pagination request")

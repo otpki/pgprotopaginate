@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/samber/oops"
 )
 
 // AIP-158 suggests 3 days
@@ -87,7 +85,7 @@ func validateToken(token string, params *PaginationParams) error {
 
 	decodedToken, err := decodeToken(token)
 	if err != nil {
-		return oops.In(ServiceName).Wrapf(err, "validating page token")
+		return fmt.Errorf("validating page token: %w", err)
 	}
 
 	if err := validateTokenDecoded(decodedToken, params); err != nil {
@@ -110,7 +108,7 @@ func validateTokenDecoded(token *pageToken, params *PaginationParams) error {
 
 	currentFingerprint, err := generateRequestFingerprint(params)
 	if err != nil {
-		return oops.In(ServiceName).Wrapf(err, "generating request fingerprint")
+		return fmt.Errorf("generating request fingerprint: %w", err)
 	}
 	if token.RequestFingerprint != currentFingerprint {
 		return fmt.Errorf("%w: invalid token fingerprint", ErrInvalidRequest)

@@ -10,7 +10,6 @@ import (
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/samber/oops"
 )
 
 type andWriter struct {
@@ -50,13 +49,13 @@ func NewQueryBuilder(params *PaginationParams) *QueryBuilder {
 // BuildSQL generates a SQL query
 func (qb *QueryBuilder) BuildSQL() (string, []any, error) {
 	if qb.params.table == "" {
-		return "", nil, oops.In(ServiceName).New("table is required")
+		return "", nil, fmt.Errorf("table is required")
 	}
 	if qb.params.model == nil {
-		return "", nil, oops.In(ServiceName).New("model is required")
+		return "", nil, fmt.Errorf("model is required")
 	}
 	if qb.params.PageSize <= 0 {
-		return "", nil, oops.In(ServiceName).New("page size must be greater than 0")
+		return "", nil, fmt.Errorf("page size must be greater than 0")
 	}
 
 	// handle token keyset pagination with a CTE
@@ -155,10 +154,10 @@ func (qb *QueryBuilder) splitAdditionalSelectColumns() (base, deferred []string)
 // BuildCountSQL generates a count query
 func (qb *QueryBuilder) BuildCountSQL() (string, []any, error) {
 	if qb.params.table == "" {
-		return "", nil, oops.In(ServiceName).New("table is required")
+		return "", nil, fmt.Errorf("table is required")
 	}
 	if qb.params.model == nil {
-		return "", nil, oops.In(ServiceName).New("model is required")
+		return "", nil, fmt.Errorf("model is required")
 	}
 
 	grouped := qb.params.groupBy != ""
@@ -201,13 +200,13 @@ func (qb *QueryBuilder) buildSelectClause(queryBuilder *strings.Builder, additio
 		// extract columns from the model
 		cols, err := GetColumnNames(qb.params.model)
 		if err != nil {
-			return oops.In(ServiceName).Wrapf(err, "extracting columns from model")
+			return fmt.Errorf("extracting columns from model: %w", err)
 		}
 		columns = cols
 	}
 
 	if len(columns) == 0 {
-		return oops.In(ServiceName).New("no columns to select")
+		return fmt.Errorf("no columns to select")
 	}
 
 	// fully qualify the column names

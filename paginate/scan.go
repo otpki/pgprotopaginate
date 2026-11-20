@@ -2,12 +2,12 @@ package paginate
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 
 	queryPB "buf.build/gen/go/omnitrust/pgprotopaginate/protocolbuffers/go/otpki/pgprotopaginate/v1"
 	"github.com/jackc/pgx/v5"
-	"github.com/samber/oops"
 )
 
 // CreatePaginationResponse creates a PaginationResponse from an array of model values and count query result
@@ -24,17 +24,17 @@ func CreatePaginationResponse[T any](models []T, countRows pgx.Rows, params *Pag
 			// no need to close countRows here, it will be closed in ParseCountEstimate
 			estimate, err := ParseCountEstimate(countRows)
 			if err != nil {
-				return nil, nil, oops.In(ServiceName).Wrapf(err, "parsing count estimate")
+				return nil, nil, fmt.Errorf("parsing count estimate: %w", err)
 			}
 			totalCount = estimate
 		} else {
 			defer countRows.Close()
 			// Parse exact COUNT(*) result
 			if !countRows.Next() {
-				return nil, nil, oops.In(ServiceName).New("no rows returned from count query")
+				return nil, nil, fmt.Errorf("no rows returned from count query")
 			}
 			if err := countRows.Scan(&totalCount); err != nil {
-				return nil, nil, oops.In(ServiceName).Wrapf(err, "scanning count result")
+				return nil, nil, fmt.Errorf("scanning count result: %w", err)
 			}
 		}
 		response.TotalCount = totalCount
@@ -74,34 +74,34 @@ func ParseCountEstimate(rows pgx.Rows) (int64, error) {
 	defer rows.Close()
 
 	if !rows.Next() {
-		return 0, oops.In(ServiceName).New("no rows returned from EXPLAIN query")
+		return 0, fmt.Errorf("no rows returned from EXPLAIN query")
 	}
 
 	var explainJSON []byte
 	if err := rows.Scan(&explainJSON); err != nil {
-		return 0, oops.In(ServiceName).Wrapf(err, "scanning EXPLAIN result")
+		return 0, fmt.Errorf("scanning EXPLAIN result: %w", err)
 	}
 
 	// parse the JSON structure
 	var explainResult []map[string]any
 	if err := json.Unmarshal(explainJSON, &explainResult); err != nil {
-		return 0, oops.In(ServiceName).Wrapf(err, "parsing EXPLAIN JSON")
+		return 0, fmt.Errorf("parsing EXPLAIN JSON: %w", err)
 	}
 
 	if len(explainResult) == 0 {
-		return 0, oops.In(ServiceName).New("empty EXPLAIN result")
+		return 0, fmt.Errorf("empty EXPLAIN result")
 	}
 
 	// extract plan rows from the first plan
 	plan, ok := explainResult[0]["Plan"].(map[string]any)
 	if !ok {
-		return 0, oops.In(ServiceName).New("Plan not found in EXPLAIN result")
+		return 0, fmt.Errorf("missing Plan in EXPLAIN result")
 	}
 
 	// JSON unmarshaler converts all JSON numbers to float64 by default
 	planRows, ok := plan["Plan Rows"].(float64)
 	if !ok {
-		return 0, oops.In(ServiceName).New("Plan Rows not found or not numeric in EXPLAIN result")
+		return 0, fmt.Errorf("missing or nonnumeric Plan Rows in EXPLAIN result")
 	}
 
 	return int64(planRows), nil
@@ -120,9 +120,9 @@ func ScanRows[T any](rows pgx.Rows) ([]T, error) {
 		// the result reader to surface the real error instead of a generic message
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "executing query")
+			return nil, fmt.Errorf("executing query: %w", err)
 		}
-		return nil, oops.In(ServiceName).New("no columns in result set")
+		return nil, fmt.Errorf("no columns in result set")
 	}
 
 	// extract column names as strings
@@ -140,19 +140,19 @@ func ScanRows[T any](rows pgx.Rows) ([]T, error) {
 		// prepare values for scanning
 		values, err := prepareScanValues(modelPtr, columns)
 		if err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "preparing scan values")
+			return nil, fmt.Errorf("preparing scan values: %w", err)
 		}
 
 		// scan the row
 		if err := rows.Scan(values...); err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "scanning row")
+			return nil, fmt.Errorf("scanning row: %w", err)
 		}
 
 		results = append(results, newModel)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "iterating rows")
+		return nil, fmt.Errorf("iterating rows: %w", err)
 	}
 
 	return results, nil
@@ -161,12 +161,12 @@ func ScanRows[T any](rows pgx.Rows) ([]T, error) {
 func prepareScanValues[T any](model *T, columns []string) ([]any, error) {
 	v := reflect.ValueOf(model)
 	if v.Kind() != reflect.Pointer {
-		return nil, oops.In(ServiceName).New("model must be a pointer")
+		return nil, fmt.Errorf("model must be a pointer")
 	}
 
 	v = v.Elem()
 	if v.Kind() != reflect.Struct {
-		return nil, oops.In(ServiceName).New("model must point to a struct")
+		return nil, fmt.Errorf("model must point to a struct")
 	}
 
 	var values []any
@@ -175,12 +175,12 @@ func prepareScanValues[T any](model *T, columns []string) ([]any, error) {
 		// try to find the field for this column using cached type info
 		typeInfo, err := GetTypeInfo(model)
 		if err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "getting type info")
+			return nil, fmt.Errorf("getting type info: %w", err)
 		}
 
 		fieldIndex, found := typeInfo.FieldMappings[column]
 		if !found {
-			return nil, oops.In(ServiceName).Errorf("column %s not found in model", column)
+			return nil, fmt.Errorf("column %s not found in model", column)
 		}
 
 		// get a pointer to the field for scanning, for example:
@@ -190,7 +190,7 @@ func prepareScanValues[T any](model *T, columns []string) ([]any, error) {
 		// }
 		fieldValue := v.Field(fieldIndex)
 		if !fieldValue.CanAddr() {
-			return nil, oops.In(ServiceName).Errorf("field %s is not addressable", column)
+			return nil, fmt.Errorf("field %s is not addressable", column)
 		}
 
 		values = append(values, fieldValue.Addr().Interface())
@@ -212,9 +212,9 @@ func ScanRowsWithAdditional[T any](rows pgx.Rows, additionalColumns []string, ad
 		// the result reader to surface the real error instead of a generic message
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "executing query")
+			return nil, fmt.Errorf("executing query: %w", err)
 		}
-		return nil, oops.In(ServiceName).New("no columns in result set")
+		return nil, fmt.Errorf("no columns in result set")
 	}
 
 	// extract column names as strings
@@ -235,7 +235,7 @@ func ScanRowsWithAdditional[T any](rows pgx.Rows, additionalColumns []string, ad
 		// Prepare scan values for model and additional data
 		values, additionalValues, err := prepareMixedScanValues(modelPtr, modelColumns, additionalCols, additionalColumnTypes)
 		if err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "preparing mixed scan values")
+			return nil, fmt.Errorf("preparing mixed scan values: %w", err)
 		}
 
 		// Combine all values for scanning
@@ -243,7 +243,7 @@ func ScanRowsWithAdditional[T any](rows pgx.Rows, additionalColumns []string, ad
 
 		// scan the row
 		if err := rows.Scan(values...); err != nil {
-			return nil, oops.In(ServiceName).Wrapf(err, "scanning row")
+			return nil, fmt.Errorf("scanning row: %w", err)
 		}
 
 		// Handle additional data if handler provided
@@ -253,7 +253,7 @@ func ScanRowsWithAdditional[T any](rows pgx.Rows, additionalColumns []string, ad
 				additionalDataMap[col] = additionalScanValue(additionalValues[i])
 			}
 			if err := additionalDataHandler(additionalDataMap); err != nil {
-				return nil, oops.In(ServiceName).Wrapf(err, "handling additional row data")
+				return nil, fmt.Errorf("handling additional row data: %w", err)
 			}
 		}
 
@@ -261,7 +261,7 @@ func ScanRowsWithAdditional[T any](rows pgx.Rows, additionalColumns []string, ad
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, oops.In(ServiceName).Wrapf(err, "iterating rows")
+		return nil, fmt.Errorf("iterating rows: %w", err)
 	}
 
 	return results, nil
